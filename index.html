@@ -274,12 +274,14 @@
 const K_USERS='crm:users', K_ORDERS='crm:orders', K_COORD='crm:coordination', K_LOST='crm:lostorders', K_ACTIVITY='crm:activity';
 
 /* ================= GOOGLE SIGN-IN CONFIG =================
-   Replace this with your own OAuth 2.0 Web Client ID from Google Cloud Console
-   (APIs & Services -> Credentials -> Create Credentials -> OAuth client ID -> Web application).
+   OAuth 2.0 Web Client ID from Google Cloud Console.
    You must add the exact URL where this file is hosted (e.g. https://yourdomain.com) as an
    "Authorized JavaScript origin" for the client ID, or Google Sign-In will refuse to load.
-   This will NOT work opened as a local file:// path — it must be served over http(s). */
-const GOOGLE_CLIENT_ID = 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com';
+   This will NOT work opened as a local file:// path - it must be served over http(s).
+
+   Do not put the Google OAuth client secret in this HTML file. Browser code is public, and
+   Google Identity Services front-end sign-in only needs the Web Client ID below. */
+const GOOGLE_CLIENT_ID = '1003318748688-mt6e727mff79255ii97bmicmr3gek9f9.apps.googleusercontent.com';
 
 async function storageGet(key){
   try{
