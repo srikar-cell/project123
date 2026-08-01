@@ -283,6 +283,49 @@ const K_USERS='crm:users', K_ORDERS='crm:orders', K_COORD='crm:coordination', K_
    Google Identity Services front-end sign-in only needs the Web Client ID below. */
 const GOOGLE_CLIENT_ID = '1003318748688-mt6e727mff79255ii97bmicmr3gek9f9.apps.googleusercontent.com';
 
+/* ================= GOOGLE SHEET SYNC =================
+   Apps Script web app endpoint connected to the Google Sheet. The client keeps localStorage
+   as the offline fallback, and posts each saved collection here for sheet persistence.
+   Apps Script should read JSON from e.postData.contents. */
+const GOOGLE_SHEET_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxgkZfpInWB9P3f7rQ2F2iOFlSoJs9gN7JAwChq7yssYT5QWDFuiqdfjl8cHuazkP31/exec';
+const GOOGLE_SHEET_SYNC_KEYS = new Set([K_USERS, K_ORDERS, K_COORD, K_LOST]);
+
+function sheetNameForKey(key){
+  return ({
+    [K_USERS]: 'Users',
+    [K_ORDERS]: 'Orders',
+    [K_COORD]: 'Coordination',
+    [K_LOST]: 'LostOrders'
+  })[key] || key;
+}
+
+function syncToGoogleSheet(key, val){
+  if(!GOOGLE_SHEET_WEB_APP_URL || !GOOGLE_SHEET_SYNC_KEYS.has(key)) return;
+  const payload = {
+    app: 'pipeline-control',
+    action: 'replace',
+    key,
+    sheet: sheetNameForKey(key),
+    timestamp: new Date().toISOString(),
+    user: state.currentUser ? {
+      username: state.currentUser.username,
+      email: state.currentUser.email || state.currentUser.username,
+      name: state.currentUser.name || '',
+      role: state.currentUser.role || ''
+    } : null,
+    records: Array.isArray(val) ? val : [val],
+    data: val
+  };
+
+  fetch(GOOGLE_SHEET_WEB_APP_URL, {
+    method: 'POST',
+    mode: 'no-cors',
+    headers: {'Content-Type': 'text/plain;charset=utf-8'},
+    body: JSON.stringify(payload),
+    keepalive: JSON.stringify(payload).length < 60000
+  }).catch(e=>console.warn('Google Sheet sync failed', key, e));
+}
+
 async function storageGet(key){
   try{
     if(window.storage && window.storage.get){ const r = await window.storage.get(key, true); return r ? JSON.parse(r.value) : null; }
@@ -292,10 +335,11 @@ async function storageGet(key){
 }
 async function storageSet(key, val){
   try{
-    if(window.storage && window.storage.set){ await window.storage.set(key, JSON.stringify(val), true); return; }
+    if(window.storage && window.storage.set){ await window.storage.set(key, JSON.stringify(val), true); syncToGoogleSheet(key, val); return; }
   }catch(e){ /* fall through to localStorage */ }
   try{ localStorage.setItem(key, JSON.stringify(val)); }
   catch(e){ console.error('storage set failed', key, e); }
+  syncToGoogleSheet(key, val);
 }
 
 /* ================= STATE ================= */
@@ -483,626 +527,25 @@ function activeActionType(order){
   return (!last.endDate) ? (last.actionType||'') : '';
 }
 
-/* IMPORTANT: window.storage is shared/persistent across every version of this file you open in
-   this browser — it is NOT reset just because you download a newer copy. If you'd already added
-   even a couple of test leads before, seedDemoDataIfEmpty() below would silently no-op forever
-   on every future version, because it only seeds when orders are completely empty. SEED_VERSION
-   fixes that: if the stored version doesn't match and there's only a small amount of data (≤10
-   orders — almost certainly leftover test entries, not real logged deals), it force-refreshes the
-   demo set once. Past that threshold, it assumes the data is real and never touches it again. */
-const SEED_VERSION = 'demo-100-2026-07-20';
-const K_SEEDVER = 'crm:seedVersion';
+/* ================= EMPTY STARTUP DATA =================
+   No starter orders are created automatically. The tracker starts with empty pipeline data.
+   If an older browser already has saved pipeline records, init() clears them once.
+   Google users are kept. */
+const K_DATA_VERSION = 'crm:dataVersion';
+const EMPTY_DATA_VERSION = 'empty-2026-08-01';
 
-/* ================= SEED =================
-   No demo accounts are seeded anymore. The first person to sign in with Google becomes
-   admin automatically (see handleGoogleCredential), and everyone after that is invited
-   by email from the Team tab. */
-function seedIfEmpty(){}
-
-async function seedDemoDataIfEmpty(){
-  if(state.orders.length>0) return; // never touch real/existing data on a normal load
-  await runSeed();
-}
-
-/* Manual, always-available escape hatch: force a fresh demo dataset regardless of current
-   contents. Used by the "Reload sample data" control, and by the one-time version-gated
-   safety net in init() for people who got stuck with leftover test entries. */
-async function forceReseed(){
-  await runSeed();
-  await storageSet(K_SEEDVER, {v: SEED_VERSION});
-  state.viewingAsRep = null;
-  render();
-}
-async function runSeed(){
-
-  const TODAY_ANCHOR = '2026-07-17'; // matches TODAY inside genPoolOrders — anchor for lost-order target dates
-  const A='user1', K='user2'; // Aditi Sharma, Karan Mehta
-  const mk = (o) => ({
-    id: uid(), leadSourceType:'Outbound', leadSourceName:'Field visit', clientPOC:'', clientPOCDesignation:'',
-    clientMobile:'', clientEmail:'', product:'Precast concrete units', location:'', priority:'Warm',
-    stageChangedDate:'', reasonLostWon:'', closedDate:'', followUpDate:'', nextAction:'', updates:[],
-    nextActionChangedDate:'', actionHistory:[], followUpHistory:[], stageHistory:[], ...o
-  });
-
-  /* Generates ~50 additional realistic deals with full stage/action/follow-up history so
-     reports, Deal Cycle, and downloads have real volume to work with \u2014 on top of the 16
-     hand-written flagship deals above. Every date is built as an offset from an anchor date so
-     nothing can land in the future. */
-  function genPoolOrders(A, K, mk){
-    const TODAY = '2026-07-17';
-    const POOL = [
-      ['Mumbai Metro Rail Corp','Platform coping units — Line 3','Metro Project','Mumbai'],
-      ['Chennai Metro Rail Ltd','Segmental viaduct units — Phase 2','Metro Project','Chennai'],
-      ['Kochi Metro Rail Ltd','Station drainage package','Metro Project','Kochi'],
-      ['Nagpur Metro Rail Corp','Elevated corridor coping slabs','Metro Project','Nagpur'],
-      ['Ahmedabad Metro Rail Corp','Precast parapet units','Metro Project','Ahmedabad'],
-      ['Pune Metro Rail Corp','Platform edge units','Metro Project','Pune'],
-      ['Lucknow Metro Rail Corp','Station boundary walls','Metro Project','Lucknow'],
-      ['Jaipur Metro Rail Corp','Elevated viaduct drainage','Metro Project','Jaipur'],
-      ['Central Railway','Platform shelter foundations — Mumbai Division','Railway Project','Mumbai'],
-      ['Western Railway','Track-side drainage — Vadodara Division','Railway Project','Vadodara'],
-      ['Northern Railway','Platform coping — Ambala Division','Railway Project','Ambala'],
-      ['Eastern Railway','Boundary wall precast units','Railway Project','Kolkata'],
-      ['South Western Railway','Culvert units — Hubli Division','Railway Project','Hubli'],
-      ['East Coast Railway','Platform drainage — Khurda Division','Railway Project','Bhubaneswar'],
-      ['North Central Railway','Coping slabs — Prayagraj Division','Railway Project','Prayagraj'],
-      ['South Central Railway (Vijayawada)','Culvert extension — Zone 4','Railway Project','Vijayawada'],
-      ['NHAI Nagpur-Mumbai Expressway','Box culverts — Package 6','Drainage Project','Nagpur'],
-      ['NHAI Delhi-Meerut Expressway','Median drainage units','Drainage Project','Meerut'],
-      ['NHAI Bengaluru-Chennai Expressway','Cross drainage structures','Drainage Project','Bengaluru'],
-      ['NHAI Kolkata Bypass','Precast box culverts','Drainage Project','Kolkata'],
-      ['AAI Chennai Airport','Runway drainage channels','Airport (AAI) Project','Chennai'],
-      ['AAI Kolkata Airport','Perimeter drainage units','Airport (AAI) Project','Kolkata'],
-      ['AAI Lucknow Airport','Apron drainage package','Airport (AAI) Project','Lucknow'],
-      ['AAI Guwahati Airport','Taxiway drainage channels','Airport (AAI) Project','Guwahati'],
-      ['AAI Bhubaneswar Airport','Terminal area drainage','Airport (AAI) Project','Bhubaneswar'],
-      ['AAI Nagpur Airport','Perimeter road drainage','Airport (AAI) Project','Nagpur'],
-      ['Indore Municipal Corporation','Stormwater U-drains — Zone 5','Drainage Project','Indore'],
-      ['Surat Municipal Corporation','Underground drainage units','Drainage Project','Surat'],
-      ['Coimbatore Municipal Corporation','Road-side drainage package','Drainage Project','Coimbatore'],
-      ['Visakhapatnam Municipal Corporation','Coastal drainage channels','Drainage Project','Visakhapatnam'],
-      ['Kanpur Municipal Corporation','Sewer line precast units','Drainage Project','Kanpur'],
-      ['Bhopal Smart City Ltd','Smart road drainage package','Drainage Project','Bhopal'],
-      ['Nagpur Smart & Sustainable City','Underground utility ducts','Other','Nagpur'],
-      ['Pune Cantonment Board','Boundary wall and drainage works','Drainage Project','Pune'],
-      ['Ambala Cantonment Board','Precast toilet blocks','Other','Ambala'],
-      ['Meerut Cantonment Board','Perimeter drainage units','Drainage Project','Meerut'],
-      ['MES Secunderabad','Precast boundary and drainage works','Railway Project','Secunderabad'],
-      ['CPWD New Delhi','Government housing drainage package','Other','New Delhi'],
-      ['DDA Delhi','Housing project hollow-core slabs','Other','New Delhi'],
-      ['HUDA Gurugram','Road-side crash barriers','Other','Gurugram'],
-      ['CIDCO Navi Mumbai','Precast boundary walls — Phase 3','Other','Navi Mumbai'],
-      ['Jawaharlal Nehru Port Trust','Perimeter drainage — port expansion','Drainage Project','Mumbai'],
-      ['Chennai Port Trust','Yard drainage channels','Drainage Project','Chennai'],
-      ['Visakhapatnam Port Trust','Approach road culverts','Drainage Project','Visakhapatnam'],
-      ['Irrigation Department Telangana','Canal lining precast units','Other','Hyderabad'],
-      ['Water Resources Department Odisha','Culvert units — flood control','Drainage Project','Bhubaneswar'],
-      ['GAIL Pipeline Project','Crash barrier units — pipeline corridor','Other','Vadodara'],
-      ['IOCL Refinery Expansion','Precast boundary walls','Other','Panipat'],
-      ['Border Roads Organisation (Arunachal)','Culvert units — strategic road','Drainage Project','Tawang, Arunachal Pradesh'],
-      ['Uttarakhand PWD','Hill road drainage channels','Drainage Project','Dehradun'],
-      ['Telangana State RTC','Precast bus shelter units','Bus Stand Project','Hyderabad'],
-      ['Karnataka State Road Transport Corporation','Bus terminal coping units','Bus Stand Project','Bengaluru'],
-      ['Uttar Pradesh State Road Transport Corporation','Bus stand boundary walls','Bus Stand Project','Lucknow'],
-      ['Rajasthan State Road Transport Corporation','Precast bus bay units','Bus Stand Project','Jaipur'],
-      ['Gujarat State Road Transport Corporation','Bus terminal drainage package','Bus Stand Project','Ahmedabad'],
-      ['Maharashtra State Road Transport Corporation','Bus depot boundary walls','Bus Stand Project','Mumbai'],
-      ['Punjab Roadways','Bus stand shelter units','Bus Stand Project','Chandigarh'],
-      ['Kerala State Road Transport Corporation','Bus terminal precast units','Bus Stand Project','Thiruvananthapuram'],
-      ['Odisha State Road Transport Corporation','Bus bay coping units','Bus Stand Project','Bhubaneswar'],
-      ['West Bengal Transport Corporation','Bus depot drainage package','Bus Stand Project','Kolkata'],
-      ['Haryana Roadways','Bus stand boundary walls','Bus Stand Project','Panipat'],
-      ['Bihar State Road Transport Corporation','Bus terminal precast units','Bus Stand Project','Patna'],
-      ['AAI Patna Airport','Apron drainage channels','Airport (AAI) Project','Patna'],
-      ['AAI Ranchi Airport','Perimeter drainage units','Airport (AAI) Project','Ranchi'],
-      ['AAI Indore Airport','Taxiway drainage package','Airport (AAI) Project','Indore'],
-      ['AAI Coimbatore Airport','Terminal area drainage','Airport (AAI) Project','Coimbatore'],
-      ['AAI Vadodara Airport','Runway shoulder drainage','Airport (AAI) Project','Vadodara'],
-      ['Kanpur Metro Rail Corp','Elevated station coping units','Metro Project','Kanpur'],
-      ['Agra Metro Rail Corp','Platform edge units','Metro Project','Agra'],
-      ['Nashik Metro (Maha Metro)','Station drainage package','Metro Project','Nashik'],
-      ['Bhopal Metro Rail Corp','Precast parapet units','Metro Project','Bhopal'],
-      ['Surat Metro Rail Corp','Elevated corridor coping slabs','Metro Project','Surat'],
-      ['South Eastern Railway','Platform coping — Adra Division','Railway Project','Adra'],
-      ['Southern Railway','Track-side drainage — Trichy Division','Railway Project','Tiruchirappalli'],
-      ['North Western Railway','Culvert units — Jodhpur Division','Railway Project','Jodhpur'],
-      ['West Central Railway','Boundary wall precast units','Railway Project','Jabalpur'],
-      ['East Central Railway','Platform drainage — Danapur Division','Railway Project','Patna'],
-      ['ONGC Ankleshwar','Precast boundary walls','Other','Ankleshwar'],
-      ['SAIL Rourkela Steel Plant','Crash barrier units','Other','Rourkela'],
-      ['Bharat Petroleum Kochi Refinery','Perimeter drainage package','Other','Kochi'],
-      ['Delhi Cantonment Board','Precast toilet blocks','Other','New Delhi'],
-      ['NHAI Pune-Solapur Highway','Median drainage units','Drainage Project','Pune'],
-      ['Rajkot Municipal Corporation','Stormwater U-drains','Drainage Project','Rajkot'],
-      ['Jodhpur Development Authority','Road-side drainage package','Drainage Project','Jodhpur']
-    ];
-    const ACTIONS_BY_STAGE = [
-      [{t:'Send capability statement and past project references', ty:'Internal'},
-       {t:'Research client requirements and decision-making unit', ty:'Internal'},
-       {t:'Get warm introduction to procurement team', ty:'External'}],
-      [{t:'Confirm meeting date and attendee list', ty:'External'},
-       {t:'Prepare technical presentation for client meeting', ty:'Internal'},
-       {t:'Coordinate site visit logistics', ty:'Internal'}],
-      [{t:'Share technical clarifications requested by client', ty:'Internal'},
-       {t:"Await client's feedback on technical proposal", ty:'External'},
-       {t:'Cast and cure trial mix samples for approval', ty:'Internal'}],
-      [{t:'Prepare and submit commercial quotation', ty:'Internal'},
-       {t:"Await client's internal budget approval", ty:'External'},
-       {t:'Negotiate pricing after client counter-offer', ty:'Internal'}],
-      [{t:'Confirm final commercial terms before PO release', ty:'External'},
-       {t:'Await PO release after client board approval', ty:'External'},
-       {t:'Finalize delivery schedule and mobilize production slot', ty:'Internal'}]
-    ];
-    const WON_REASONS = [
-      'Best technical fit and fastest lead time versus competing bids.',
-      'Strong existing relationship with the client team.',
-      'Most competitive pricing after final negotiation round.',
-      'Fastest committed delivery timeline among shortlisted vendors.',
-      'Matched existing approved template — fastest to mobilize.'
-    ];
-    const LOST_REASONS = [
-      'Quoted price came in higher than the winning competitor.',
-      'Client shelved the project pending budget reallocation.',
-      'Lost on delivery timeline — competitor committed faster.',
-      'Client preferred an existing empanelled vendor.',
-      'Technical specification mismatch flagged during evaluation.'
-    ];
-    const POC_NAMES = ['Rajesh Kumar','Priya Nair','Sanjay Verma','Anita Desai','Vikram Singh','Meera Iyer','Arun Prakash','Kavita Rao','Deepak Joshi','Sunita Menon'];
-    const POC_DESIGNATIONS = ['Purchase Manager','Project Engineer','Executive Engineer','Procurement Head','Site Engineer'];
-    const LEAD_SOURCE_NAMES = ['Referral','Website enquiry','Field visit','Tender portal','Cold call'];
-
-    function rand(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
-    function randInt(a,b){ return a+Math.floor(Math.random()*(b-a+1)); }
-    function addDays(dateStr, n){ const d=new Date(dateStr); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
-
-    return POOL.map((p,i)=>{
-      const [clientName, projectName, projectType, location] = p;
-      const salesPerson = i%2===0 ? A : K;
-      const priority = rand(['Hot','Hot','Warm','Warm','Warm','Cold']);
-      const estimatedValue = Math.round(randInt(8,55))/10;
-
-      const roll = Math.random();
-      const outcome = roll<0.55 ? 'open' : (roll<0.82 ? 'won' : 'lost');
-      const stagesToWalk = (outcome==='open') ? randInt(1,5) : 5;
-
-      let offset = 0;
-      const stageOffsets = [], actionOffsets = [], followUpOffsets = [];
-      let lastActionStart = 0;
-
-      for(let s=0; s<stagesToWalk; s++){
-        const stageDwell = randInt(3,9);
-        const stageStart = offset;
-        const isLastOpenStage = (s===stagesToWalk-1) && outcome==='open';
-        const stageEnd = isLastOpenStage ? null : stageStart+stageDwell;
-        stageOffsets.push({stage: STAGES[s], start: stageStart, end: stageEnd});
-
-        const act = rand(ACTIONS_BY_STAGE[s]);
-        const actionDwell = Math.min(randInt(2,8), stageDwell);
-        const actionEnd = isLastOpenStage ? null : stageStart+actionDwell;
-        const hadDelay = !isLastOpenStage && actionDwell>5;
-        actionOffsets.push({text:act.t, ty:act.ty, start:stageStart, end:actionEnd, delayed:hadDelay});
-        lastActionStart = stageStart;
-
-        if(actionEnd!==null){
-          const onTime = Math.random()<0.35;
-          const targetOffset = onTime ? actionEnd : Math.max(stageStart, actionEnd - randInt(1, Math.max(1,actionDwell)));
-          followUpOffsets.push({label:act.t, target:targetOffset, done:actionEnd, actionKey:stageStart, delayed: actionEnd>targetOffset, ty:act.ty});
-        }
-        offset = (stageEnd!==null) ? stageEnd : stageStart;
-      }
-
-      let dateLogged, closedDateStr='', anchor;
-      if(outcome==='open'){
-        const sittingExtra = randInt(0,20);
-        const totalElapsed = offset + sittingExtra;
-        dateLogged = addDays(TODAY, -totalElapsed);
-      } else {
-        const closedDaysAgo = randInt(5,150);
-        closedDateStr = addDays(TODAY, -closedDaysAgo);
-        const totalOffset = offset + randInt(2,6);
-        dateLogged = addDays(closedDateStr, -totalOffset);
-      }
-      anchor = dateLogged;
-
-      const stageHistory = stageOffsets.map(s=>({stage:s.stage, startDate:addDays(anchor,s.start), endDate: s.end===null?null:addDays(anchor,s.end)}));
-      const actionHistory = actionOffsets.map(a=>{
-        const isDelayed = a.delayed;
-        const dT = isDelayed ? rand(['Internal','External','Both']) : '';
-        const dR = isDelayed ? (dT==='Internal'?'Internal review/approval took longer than planned.':(dT==='External'?'Client took longer than expected to respond.':'Both sides faced scheduling conflicts.')) : '';
-        return {
-          text:a.text, setDate:addDays(anchor,a.start), endDate: a.end===null?null:addDays(anchor,a.end), actionType:a.ty,
-          delayReason: dR, delayType: dT, remarks: a.end!==null ? 'Completed successfully' : ''
-        };
-      });
-      const followUpHistory = followUpOffsets.map(f=>({
-        label:f.label, targetDate:addDays(anchor,f.target), doneDate:addDays(anchor,f.done), actionKey:addDays(anchor,f.actionKey),
-        delayReason: f.delayed ? (f.ty==='Internal'?'Ran a few days behind internally.':'Client follow-up took longer than expected.') : ''
-      }));
-
-      let dealStage, closedDate='', followUpDate='', nextAction='', reasonLostWon='', stageChangedDate, nextActionChangedDate;
-      if(outcome!=='open'){
-        dealStage = outcome==='won' ? STAGES[5] : STAGES[6];
-        closedDate = closedDateStr;
-        stageHistory.push({stage:dealStage, startDate:closedDate, endDate:closedDate});
-        reasonLostWon = outcome==='won' ? rand(WON_REASONS) : rand(LOST_REASONS);
-        stageChangedDate = closedDate;
-        nextActionChangedDate = actionHistory.length ? actionHistory[actionHistory.length-1].endDate : dateLogged;
-      } else {
-        dealStage = STAGES[stagesToWalk-1];
-        nextAction = actionHistory[actionHistory.length-1].text;
-        followUpDate = addDays(TODAY, randInt(-6,10));
-        stageChangedDate = stageHistory[stageHistory.length-1].startDate;
-        nextActionChangedDate = addDays(anchor, lastActionStart);
-      }
-
-      return mk({
-        clientName, projectName, projectType, location,
-        estimatedValue, priority, dealStage, salesPerson,
-        dateLogged, closedDate, followUpDate, nextAction, reasonLostWon,
-        stageChangedDate, nextActionChangedDate,
-        stageHistory, actionHistory, followUpHistory,
-        leadSourceType: rand(['Inbound','Outbound']), leadSourceName: rand(LEAD_SOURCE_NAMES),
-        product: rand(PRODUCTS), clientPOC: rand(POC_NAMES), clientPOCDesignation: rand(POC_DESIGNATIONS),
-        clientMobile: String(randInt(7000000000,9999999999)),
-        clientEmail: 'contact@'+clientName.toLowerCase().replace(/[^a-z0-9]+/g,'')+'.example.com'
-      });
-    });
-  }
-
-  const orders = [
-    mk({clientName:'Delhi Metro Rail Corporation', projectName:'Platform drainage units — Phase 2', projectType:'Metro Project', location:'New Delhi', clientPOC:'Rajeev Bhatia', clientPOCDesignation:'Executive Engineer', clientMobile:'9811023456', clientEmail:'rajeev.bhatia@dmrc.example.com', product:'U Drain', estimatedValue:4.2, priority:'Hot', dealStage:'6. Closed Won (Client!)', salesPerson:A, dateLogged:'2026-04-10', closedDate:'2026-05-02', reasonLostWon:'Best technical fit and fastest lead time versus competing bids.', stageChangedDate:'2026-05-02', nextActionChangedDate:'2026-04-27',
-      stageHistory:[
-        {stage:'1. New Lead', startDate:'2026-04-10', endDate:'2026-04-13'},
-        {stage:'2. Meeting Planned / Scheduled', startDate:'2026-04-13', endDate:'2026-04-17'},
-        {stage:'3. Meeting Done / Ongoing Talk', startDate:'2026-04-17', endDate:'2026-04-22'},
-        {stage:'4. Quote Submitted', startDate:'2026-04-22', endDate:'2026-04-27'},
-        {stage:'5. Expected Order / PO Awaited', startDate:'2026-04-27', endDate:'2026-05-02'},
-        {stage:'6. Closed Won (Client!)', startDate:'2026-05-02', endDate:'2026-05-02'}
-      ],
-      actionHistory:[
-        {text:'Share technical capability statement and past metro project references', setDate:'2026-04-10', endDate:'2026-04-15', actionType:'Internal', delayReason:''},
-        {text:'Coordinate technical audit visit to Hyderabad plant', setDate:'2026-04-15', endDate:'2026-04-20', actionType:'Internal', delayReason:''},
-        {text:'Submit quotation and technical drawings', setDate:'2026-04-20', endDate:'2026-04-27', actionType:'Internal', delayReason:'Estimation team took longer to finalize BOQ pricing for platform-specific units.'},
-        {text:'Confirm commercial terms and await PO', setDate:'2026-04-27', endDate:'2026-05-02', actionType:'External', delayReason:''}
-      ],
-      followUpHistory:[
-        {label:'Share technical capability statement and past metro project references', targetDate:'2026-04-13', doneDate:'2026-04-13', delayReason:'', actionKey:'2026-04-10'},
-        {label:'Coordinate technical audit visit to Hyderabad plant', targetDate:'2026-04-18', doneDate:'2026-04-20', delayReason:'Plant visit rescheduled due to client team availability.', actionKey:'2026-04-15'},
-        {label:'Submit quotation and technical drawings', targetDate:'2026-04-23', doneDate:'2026-04-23', delayReason:'', actionKey:'2026-04-20'},
-        {label:'Confirm commercial terms and await PO', targetDate:'2026-04-30', doneDate:'2026-05-02', delayReason:'Awaiting finance sign-off on advance payment terms.', actionKey:'2026-04-27'}
-      ]
-    }),
-    mk({clientName:'GMR Hyderabad Airport', projectName:'Taxiway drainage channels', projectType:'Airport (AAI) Project', location:'Hyderabad', clientPOC:'Naveen Kumar', clientPOCDesignation:'Project Engineer', clientMobile:'9848012345', clientEmail:'naveen.kumar@gmrairports.example.com', product:'U Drain', estimatedValue:2.8, priority:'Warm', dealStage:'6. Closed Won (Client!)', salesPerson:K, dateLogged:'2026-03-15', closedDate:'2026-04-20', reasonLostWon:'Strong existing relationship with airport operations team.', stageChangedDate:'2026-04-20', nextActionChangedDate:'2026-04-12',
-      stageHistory:[
-        {stage:'1. New Lead', startDate:'2026-03-15', endDate:'2026-03-19'},
-        {stage:'2. Meeting Planned / Scheduled', startDate:'2026-03-19', endDate:'2026-03-25'},
-        {stage:'3. Meeting Done / Ongoing Talk', startDate:'2026-03-25', endDate:'2026-04-02'},
-        {stage:'4. Quote Submitted', startDate:'2026-04-02', endDate:'2026-04-12'},
-        {stage:'5. Expected Order / PO Awaited', startDate:'2026-04-12', endDate:'2026-04-20'},
-        {stage:'6. Closed Won (Client!)', startDate:'2026-04-20', endDate:'2026-04-20'}
-      ],
-      actionHistory:[
-        {text:'Leverage existing ops relationship for warm intro to procurement', setDate:'2026-03-15', endDate:'2026-03-25', actionType:'Internal', delayReason:''},
-        {text:'Submit taxiway drainage quote with AAI-compliant certifications', setDate:'2026-03-25', endDate:'2026-04-12', actionType:'Internal', delayReason:'Certification paperwork took longer than expected to compile.'},
-        {text:'Follow up on PO after commercial terms agreed', setDate:'2026-04-12', endDate:'2026-04-20', actionType:'External', delayReason:''}
-      ],
-      followUpHistory:[
-        {label:'Leverage existing ops relationship for warm intro to procurement', targetDate:'2026-03-23', doneDate:'2026-03-25', delayReason:'Procurement contact was travelling.', actionKey:'2026-03-15'},
-        {label:'Submit taxiway drainage quote with AAI-compliant certifications', targetDate:'2026-04-08', doneDate:'2026-04-12', delayReason:'Certification documents delayed from compliance team.', actionKey:'2026-03-25'},
-        {label:'Follow up on PO after commercial terms agreed', targetDate:'2026-04-19', doneDate:'2026-04-20', delayReason:'', actionKey:'2026-04-12'}
-      ]
-    }),
-    mk({clientName:'NHAI Vijayawada Bypass', projectName:'Box culverts — bypass section', projectType:'Drainage Project', location:'Vijayawada', clientPOC:'Suresh Reddy', clientPOCDesignation:'Purchase Manager', clientMobile:'9440098765', clientEmail:'suresh.reddy@nhai.example.com', product:'Culverts', estimatedValue:3.5, priority:'Hot', dealStage:'7. Closed Lost', salesPerson:A, dateLogged:'2026-02-01', closedDate:'2026-03-10', reasonLostWon:'Quoted price came in about 8% above the winning competitor (L&T).', stageChangedDate:'2026-03-10', nextActionChangedDate:'2026-03-02',
-      stageHistory:[
-        {stage:'1. New Lead', startDate:'2026-02-01', endDate:'2026-02-05'},
-        {stage:'2. Meeting Planned / Scheduled', startDate:'2026-02-05', endDate:'2026-02-12'},
-        {stage:'3. Meeting Done / Ongoing Talk', startDate:'2026-02-12', endDate:'2026-02-20'},
-        {stage:'4. Quote Submitted', startDate:'2026-02-20', endDate:'2026-03-02'},
-        {stage:'5. Expected Order / PO Awaited', startDate:'2026-03-02', endDate:'2026-03-10'},
-        {stage:'7. Closed Lost', startDate:'2026-03-10', endDate:'2026-03-10'}
-      ],
-      actionHistory:[
-        {text:'Submit EOI and prequalification documents', setDate:'2026-02-01', endDate:'2026-02-06', actionType:'Internal', delayReason:''},
-        {text:'Attend pre-bid meeting and site audit', setDate:'2026-02-06', endDate:'2026-02-14', actionType:'External', delayReason:'Site audit postponed twice by NHAI project office.'},
-        {text:'Prepare and submit technical + price bid', setDate:'2026-02-14', endDate:'2026-03-02', actionType:'Internal', delayReason:'Estimation revisions required after BOQ quantities were corrected by client.'},
-        {text:'Await L1 price disclosure and negotiation call', setDate:'2026-03-02', endDate:'2026-03-10', actionType:'External', delayReason:''}
-      ],
-      followUpHistory:[
-        {label:'Submit EOI and prequalification documents', targetDate:'2026-02-04', doneDate:'2026-02-06', delayReason:'Prequalification portal was down for 2 days.', actionKey:'2026-02-01'},
-        {label:'Attend pre-bid meeting and site audit', targetDate:'2026-02-10', doneDate:'2026-02-14', delayReason:'Site audit postponed twice by NHAI project office.', actionKey:'2026-02-06'},
-        {label:'Prepare and submit technical + price bid', targetDate:'2026-02-24', doneDate:'2026-03-02', delayReason:'Revised BOQ quantities delayed final pricing sign-off.', actionKey:'2026-02-14'},
-        {label:'Prepare and submit technical + price bid', targetDate:'2026-02-28', doneDate:'2026-02-28', delayReason:'', actionKey:'2026-02-14'},
-        {label:'Await L1 price disclosure and negotiation call', targetDate:'2026-03-08', doneDate:'2026-03-10', delayReason:'Negotiation call rescheduled by client team.', actionKey:'2026-03-02'}
-      ]
-    }),
-    mk({clientName:'South Central Railway', projectName:'Platform coping slabs — Zone 3', projectType:'Railway Project', location:'Secunderabad', clientPOC:'Ramesh Iyer', clientPOCDesignation:'Executive Engineer', clientMobile:'9440187654', clientEmail:'ramesh.iyer@scr.example.com', product:'Coping Slabs', estimatedValue:1.9, priority:'Hot', dealStage:'5. Expected Order / PO Awaited', salesPerson:A, dateLogged:'2026-06-01', followUpDate:'2026-07-14', nextAction:'Confirm commercial terms with divisional engineer before PO release.', stageChangedDate:'2026-06-24', nextActionChangedDate:'2026-06-24',
-      stageHistory:[
-        {stage:'1. New Lead', startDate:'2026-06-01', endDate:'2026-06-05'},
-        {stage:'2. Meeting Planned / Scheduled', startDate:'2026-06-05', endDate:'2026-06-10'},
-        {stage:'3. Meeting Done / Ongoing Talk', startDate:'2026-06-10', endDate:'2026-06-16'},
-        {stage:'4. Quote Submitted', startDate:'2026-06-16', endDate:'2026-06-24'},
-        {stage:'5. Expected Order / PO Awaited', startDate:'2026-06-24', endDate:null}
-      ],
-      actionHistory:[
-        {text:'Share catalogue and technical specs for coping slab profiles', setDate:'2026-06-01', endDate:'2026-06-06', actionType:'Internal', delayReason:''},
-        {text:'Coordinate zonal engineer site inspection', setDate:'2026-06-06', endDate:'2026-06-14', actionType:'External', delayReason:'Inspection delayed due to ongoing track maintenance block.'},
-        {text:'Submit revised quotation post inspection feedback', setDate:'2026-06-14', endDate:'2026-06-24', actionType:'Internal', delayReason:'Revised BOQ took longer due to a change in coping slab profile spec.'},
-        {text:'Confirm commercial terms with divisional engineer before PO release.', setDate:'2026-06-24', endDate:null, actionType:'External', delayReason:''}
-      ],
-      followUpHistory:[
-        {label:'Share catalogue and technical specs for coping slab profiles', targetDate:'2026-06-04', doneDate:'2026-06-06', delayReason:'', actionKey:'2026-06-01'},
-        {label:'Coordinate zonal engineer site inspection', targetDate:'2026-06-10', doneDate:'2026-06-14', delayReason:'Inspection delayed due to ongoing track maintenance block.', actionKey:'2026-06-06'},
-        {label:'Submit revised quotation post inspection feedback', targetDate:'2026-06-20', doneDate:'2026-06-24', delayReason:'Revised BOQ took longer due to a change in coping slab profile spec.', actionKey:'2026-06-14'}
-      ]
-    }),
-    mk({clientName:'NTPC Khagaria', projectName:'Precast toilet blocks — worker colony', projectType:'Other', location:'Khagaria, Bihar', clientPOC:'Ashok Mishra', clientPOCDesignation:'Procurement Head', clientMobile:'9430076543', clientEmail:'ashok.mishra@ntpc.example.com', product:'Toilet Blocks', estimatedValue:2.9, priority:'Warm', dealStage:'7. Closed Lost', salesPerson:K, dateLogged:'2026-01-20', closedDate:'2026-02-28', reasonLostWon:'Lost on absence of ISO-compliant automated factory testing capability.', stageChangedDate:'2026-02-28', nextActionChangedDate:'2026-02-20',
-      stageHistory:[
-        {stage:'1. New Lead', startDate:'2026-01-20', endDate:'2026-01-24'},
-        {stage:'2. Meeting Planned / Scheduled', startDate:'2026-01-24', endDate:'2026-01-30'},
-        {stage:'3. Meeting Done / Ongoing Talk', startDate:'2026-01-30', endDate:'2026-02-08'},
-        {stage:'4. Quote Submitted', startDate:'2026-02-08', endDate:'2026-02-18'},
-        {stage:'5. Expected Order / PO Awaited', startDate:'2026-02-18', endDate:'2026-02-28'},
-        {stage:'7. Closed Lost', startDate:'2026-02-28', endDate:'2026-02-28'}
-      ],
-      actionHistory:[
-        {text:'Share precast toilet block specifications and pricing', setDate:'2026-01-20', endDate:'2026-01-26', actionType:'Internal', delayReason:''},
-        {text:'Coordinate factory audit visit for QC review', setDate:'2026-01-26', endDate:'2026-02-04', actionType:'External', delayReason:'NTPC QC team postponed the factory audit visit twice.'},
-        {text:'Respond to client query on automated testing certification', setDate:'2026-02-04', endDate:'2026-02-20', actionType:'Internal', delayReason:'Awaited ISO 9001 automated testing certificate that was still in progress at the plant.'},
-        {text:'Await final vendor selection decision', setDate:'2026-02-20', endDate:'2026-02-28', actionType:'External', delayReason:''}
-      ],
-      followUpHistory:[
-        {label:'Share precast toilet block specifications and pricing', targetDate:'2026-01-23', doneDate:'2026-01-26', delayReason:'', actionKey:'2026-01-20'},
-        {label:'Coordinate factory audit visit for QC review', targetDate:'2026-01-30', doneDate:'2026-02-04', delayReason:'NTPC QC team postponed the factory audit visit twice.', actionKey:'2026-01-26'},
-        {label:'Respond to client query on automated testing certification', targetDate:'2026-02-12', doneDate:'2026-02-20', delayReason:'ISO 9001 automated testing certificate was still in progress.', actionKey:'2026-02-04'},
-        {label:'Await final vendor selection decision', targetDate:'2026-02-25', doneDate:'2026-02-28', delayReason:'', actionKey:'2026-02-20'}
-      ]
-    }),
-    mk({clientName:'Bengaluru Metro Rail Corp', projectName:'Segmental viaduct units', projectType:'Metro Project', location:'Bengaluru', clientPOC:'Manjunath Gowda', clientPOCDesignation:'Project Engineer', clientMobile:'9880065432', clientEmail:'manjunath.gowda@bmrcl.example.com', product:'Others', estimatedValue:5.1, priority:'Hot', dealStage:'4. Quote Submitted', salesPerson:A, dateLogged:'2026-07-01', followUpDate:'2026-07-22', nextAction:'Await technical committee review of submitted quotation.', stageChangedDate:'2026-07-13', nextActionChangedDate:'2026-07-13',
-      stageHistory:[
-        {stage:'1. New Lead', startDate:'2026-07-01', endDate:'2026-07-04'},
-        {stage:'2. Meeting Planned / Scheduled', startDate:'2026-07-04', endDate:'2026-07-09'},
-        {stage:'3. Meeting Done / Ongoing Talk', startDate:'2026-07-09', endDate:'2026-07-13'},
-        {stage:'4. Quote Submitted', startDate:'2026-07-13', endDate:null}
-      ],
-      actionHistory:[
-        {text:'Share segmental viaduct product portfolio', setDate:'2026-07-01', endDate:'2026-07-05', actionType:'Internal', delayReason:''},
-        {text:'Coordinate technical presentation with metro rail engineers', setDate:'2026-07-05', endDate:'2026-07-13', actionType:'External', delayReason:'Client rescheduled the technical presentation twice.'},
-        {text:'Await technical committee review of submitted quotation.', setDate:'2026-07-13', endDate:null, actionType:'External', delayReason:''}
-      ],
-      followUpHistory:[
-        {label:'Share segmental viaduct product portfolio', targetDate:'2026-07-03', doneDate:'2026-07-05', delayReason:'', actionKey:'2026-07-01'},
-        {label:'Coordinate technical presentation with metro rail engineers', targetDate:'2026-07-09', doneDate:'2026-07-13', delayReason:'Client rescheduled the technical presentation twice.', actionKey:'2026-07-05'}
-      ]
-    }),
-    mk({clientName:'MP Road Development Corp', projectName:'Precast bus shelter units', projectType:'Bus Stand Project', location:'Bhopal', clientPOC:'Deepak Chourasia', clientPOCDesignation:'Site Engineer', clientMobile:'9826054321', clientEmail:'deepak.chourasia@mprdc.example.com', product:'Others', estimatedValue:0.8, priority:'Cold', dealStage:'2. Meeting Planned / Scheduled', salesPerson:K, dateLogged:'2026-07-10', followUpDate:'2026-07-25', nextAction:'Confirm site-visit date with district PWD office.', stageChangedDate:'2026-07-13', nextActionChangedDate:'2026-07-13',
-      stageHistory:[
-        {stage:'1. New Lead', startDate:'2026-07-10', endDate:'2026-07-13'},
-        {stage:'2. Meeting Planned / Scheduled', startDate:'2026-07-13', endDate:null}
-      ],
-      actionHistory:[
-        {text:'Confirm site-visit date with district PWD office.', setDate:'2026-07-13', endDate:null, actionType:'External', delayReason:''}
-      ]
-    }),
-    mk({clientName:'GHMC Hyderabad', projectName:'Stormwater U-drains — Ward 12', projectType:'Drainage Project', location:'Hyderabad', clientPOC:'Lakshmi Prasad', clientPOCDesignation:'Executive Engineer', clientMobile:'9849043210', clientEmail:'lakshmi.prasad@ghmc.example.com', product:'U Drain', estimatedValue:1.4, priority:'Warm', dealStage:'3. Meeting Done / Ongoing Talk', salesPerson:K, dateLogged:'2026-06-20', followUpDate:'2026-07-18', nextAction:'Share mix design trial results before finalizing quote.', stageChangedDate:'2026-06-28', nextActionChangedDate:'2026-06-28',
-      stageHistory:[
-        {stage:'1. New Lead', startDate:'2026-06-20', endDate:'2026-06-23'},
-        {stage:'2. Meeting Planned / Scheduled', startDate:'2026-06-23', endDate:'2026-06-28'},
-        {stage:'3. Meeting Done / Ongoing Talk', startDate:'2026-06-28', endDate:null}
-      ],
-      actionHistory:[
-        {text:'Cast M-40 trial mix for stormwater U-drain approval', setDate:'2026-06-20', endDate:'2026-06-28', actionType:'Internal', delayReason:'QC lab queue delayed casting by a few days.'},
-        {text:'Share mix design trial results before finalizing quote.', setDate:'2026-06-28', endDate:null, actionType:'Internal', delayReason:''}
-      ],
-      followUpHistory:[
-        {label:'Cast M-40 trial mix for stormwater U-drain approval', targetDate:'2026-06-25', doneDate:'2026-06-28', delayReason:'QC lab queue backed up.', actionKey:'2026-06-20'}
-      ]
-    }),
-    mk({clientName:'Gaya Railway Station (RVNL)', projectName:'Custom platform drainage — non-standard segment', projectType:'Railway Project', location:'Gaya, Bihar', clientPOC:'Bipin Kumar', clientPOCDesignation:'Project Engineer', clientMobile:'9431032109', clientEmail:'bipin.kumar@rvnl.example.com', product:'U Drain', estimatedValue:2.2, priority:'Hot', dealStage:'5. Expected Order / PO Awaited', salesPerson:A, dateLogged:'2026-05-25', followUpDate:'2026-07-17', nextAction:'Confirm mould tooling capex approval, then release final PO terms.', stageChangedDate:'2026-06-25', nextActionChangedDate:'2026-06-20',
-      updates:[{date:'2026-06-02', by:'Aditi Sharma', text:'Standard 2000mm mould does not fit platform segment layout — escalated to engineering.'},{date:'2026-06-18', by:'Aditi Sharma', text:'Engineering confirmed 490mm x 4 split is feasible — client reviewing revised drawings.'}],
-      stageHistory:[
-        {stage:'1. New Lead', startDate:'2026-05-25', endDate:'2026-05-29'},
-        {stage:'2. Meeting Planned / Scheduled', startDate:'2026-05-29', endDate:'2026-06-05'},
-        {stage:'3. Meeting Done / Ongoing Talk', startDate:'2026-06-05', endDate:'2026-06-15'},
-        {stage:'4. Quote Submitted', startDate:'2026-06-15', endDate:'2026-06-25'},
-        {stage:'5. Expected Order / PO Awaited', startDate:'2026-06-25', endDate:null}
-      ],
-      actionHistory:[
-        {text:'Share standard product catalogue and drawings', setDate:'2026-05-25', endDate:'2026-05-30', actionType:'Internal', delayReason:''},
-        {text:'Coordinate site visit for platform segment measurement', setDate:'2026-05-30', endDate:'2026-06-08', actionType:'External', delayReason:'Railway track possession window delayed the site measurement visit.'},
-        {text:'Escalate mould mismatch to engineering — 2000mm standard does not fit segment layout', setDate:'2026-06-08', endDate:'2026-06-20', actionType:'Internal', delayReason:'Engineering needed extra time to validate the 490mm x 4 section split design.'},
-        {text:'Confirm mould tooling capex approval, then release final PO terms.', setDate:'2026-06-20', endDate:null, actionType:'Internal', delayReason:''}
-      ],
-      followUpHistory:[
-        {label:'Share standard product catalogue and drawings', targetDate:'2026-05-28', doneDate:'2026-05-30', delayReason:'', actionKey:'2026-05-25'},
-        {label:'Coordinate site visit for platform segment measurement', targetDate:'2026-06-04', doneDate:'2026-06-08', delayReason:'Railway track possession window delayed the site measurement visit.', actionKey:'2026-05-30'},
-        {label:'Escalate mould mismatch to engineering', targetDate:'2026-06-14', doneDate:'2026-06-20', delayReason:'Engineering validation of the split-mould design took longer than planned.', actionKey:'2026-06-08'},
-        {label:'Escalate mould mismatch to engineering', targetDate:'2026-06-17', doneDate:'2026-06-17', delayReason:'', actionKey:'2026-06-08'}
-      ]
-    }),
-    mk({clientName:'Noida International Airport', projectName:'Perimeter drainage — Phase 1', projectType:'Airport (AAI) Project', location:'Jewar, UP', clientPOC:'Ritu Chawla', clientPOCDesignation:'Procurement Head', clientMobile:'9871021098', clientEmail:'ritu.chawla@nial.example.com', product:'U Drain', estimatedValue:3.0, priority:'Warm', dealStage:'1. New Lead', salesPerson:K, dateLogged:'2026-07-14', followUpDate:'2026-07-30', nextAction:'Send capability statement and past airport project references.', stageChangedDate:'2026-07-14', nextActionChangedDate:'2026-07-14',
-      stageHistory:[
-        {stage:'1. New Lead', startDate:'2026-07-14', endDate:null}
-      ],
-      actionHistory:[
-        {text:'Send capability statement and past airport project references.', setDate:'2026-07-14', endDate:null, actionType:'Internal', delayReason:''}
-      ]
-    }),
-    mk({clientName:'Patna Metro Rail Corp', projectName:'Elevated station coping units', projectType:'Metro Project', location:'Patna', clientPOC:'Anand Thakur', clientPOCDesignation:'Executive Engineer', clientMobile:'9431010987', clientEmail:'anand.thakur@pmrc.example.com', product:'Coping Slabs', estimatedValue:3.7, priority:'Hot', dealStage:'6. Closed Won (Client!)', salesPerson:A, dateLogged:'2026-01-05', closedDate:'2026-02-15', reasonLostWon:'Fastest committed delivery timeline among shortlisted vendors.', stageChangedDate:'2026-02-15', nextActionChangedDate:'2026-02-02',
-      stageHistory:[
-        {stage:'1. New Lead', startDate:'2026-01-05', endDate:'2026-01-08'},
-        {stage:'2. Meeting Planned / Scheduled', startDate:'2026-01-08', endDate:'2026-01-14'},
-        {stage:'3. Meeting Done / Ongoing Talk', startDate:'2026-01-14', endDate:'2026-01-22'},
-        {stage:'4. Quote Submitted', startDate:'2026-01-22', endDate:'2026-02-02'},
-        {stage:'5. Expected Order / PO Awaited', startDate:'2026-02-02', endDate:'2026-02-15'},
-        {stage:'6. Closed Won (Client!)', startDate:'2026-02-15', endDate:'2026-02-15'}
-      ],
-      actionHistory:[
-        {text:'Submit elevated station coping unit quotation', setDate:'2026-01-05', endDate:'2026-01-22', actionType:'Internal', delayReason:'Design team cross-checked coping profile against three station drawings.'},
-        {text:'Commit fastest delivery timeline vs competing vendors', setDate:'2026-01-22', endDate:'2026-02-02', actionType:'Internal', delayReason:''},
-        {text:'Await PO release after final commercial approval', setDate:'2026-02-02', endDate:'2026-02-15', actionType:'External', delayReason:'Client finance approval cycle took longer over month-end.'}
-      ],
-      followUpHistory:[
-        {label:'Submit elevated station coping unit quotation', targetDate:'2026-01-18', doneDate:'2026-01-22', delayReason:'Design cross-check took extra days.', actionKey:'2026-01-05'},
-        {label:'Await PO release after final commercial approval', targetDate:'2026-02-10', doneDate:'2026-02-15', delayReason:'Client finance approval delayed over month-end close.', actionKey:'2026-02-02'}
-      ]
-    }),
-    mk({clientName:'MSRDC Mumbai', projectName:'Bus shelter precast units — coastal road', projectType:'Bus Stand Project', location:'Mumbai', clientPOC:'Prakash Jadhav', clientPOCDesignation:'Purchase Manager', clientMobile:'9821009876', clientEmail:'prakash.jadhav@msrdc.example.com', product:'Others', estimatedValue:1.1, priority:'Cold', dealStage:'7. Closed Lost', salesPerson:K, dateLogged:'2026-03-01', closedDate:'2026-04-05', reasonLostWon:'Client shelved the project indefinitely — budget reallocation.', stageChangedDate:'2026-04-05', nextActionChangedDate:'2026-03-22',
-      stageHistory:[
-        {stage:'1. New Lead', startDate:'2026-03-01', endDate:'2026-03-05'},
-        {stage:'2. Meeting Planned / Scheduled', startDate:'2026-03-05', endDate:'2026-03-12'},
-        {stage:'3. Meeting Done / Ongoing Talk', startDate:'2026-03-12', endDate:'2026-03-22'},
-        {stage:'4. Quote Submitted', startDate:'2026-03-22', endDate:'2026-04-05'},
-        {stage:'7. Closed Lost', startDate:'2026-04-05', endDate:'2026-04-05'}
-      ],
-      actionHistory:[
-        {text:'Submit bus shelter precast unit quote for coastal road', setDate:'2026-03-01', endDate:'2026-03-22', actionType:'External', delayReason:'Client kept postponing the design finalization meeting.'},
-        {text:'Await client decision after budget review', setDate:'2026-03-22', endDate:'2026-04-05', actionType:'External', delayReason:'Client project shelved pending budget reallocation.'}
-      ],
-      followUpHistory:[
-        {label:'Submit bus shelter precast unit quote for coastal road', targetDate:'2026-03-15', doneDate:'2026-03-22', delayReason:'Client postponed design finalization meeting twice.', actionKey:'2026-03-01'}
-      ]
-    }),
-    mk({clientName:'BRO Border Roads Organisation', projectName:'Culvert units — strategic road', projectType:'Drainage Project', location:'Leh, Ladakh', clientPOC:'Vikram Rathore', clientPOCDesignation:'Site Engineer', clientMobile:'9419098765', clientEmail:'vikram.rathore@bro.example.com', product:'Culverts', estimatedValue:1.6, priority:'Warm', dealStage:'2. Meeting Planned / Scheduled', salesPerson:A, dateLogged:'2026-07-08', followUpDate:'2026-07-12', nextAction:'Reschedule site audit delayed by weather — confirm new date.', stageChangedDate:'2026-07-09', nextActionChangedDate:'2026-07-08',
-      stageHistory:[
-        {stage:'1. New Lead', startDate:'2026-07-08', endDate:'2026-07-09'},
-        {stage:'2. Meeting Planned / Scheduled', startDate:'2026-07-09', endDate:null}
-      ],
-      actionHistory:[
-        {text:'Reschedule site audit delayed by weather — confirm new date.', setDate:'2026-07-08', endDate:null, actionType:'External', delayReason:''}
-      ]
-    }),
-    mk({clientName:'GNIDA Noida Authority', projectName:'Hollow-core slabs — housing project', projectType:'Other', location:'Greater Noida', clientPOC:'Sunil Yadav', clientPOCDesignation:'Procurement Head', clientMobile:'9871087654', clientEmail:'sunil.yadav@gnida.example.com', product:'Others', estimatedValue:2.0, priority:'Warm', dealStage:'6. Closed Won (Client!)', salesPerson:K, dateLogged:'2026-02-10', closedDate:'2026-03-20', reasonLostWon:'Matched existing approved slab template — fastest to mobilize.'}),
-    mk({clientName:'MES Pune', projectName:'Precast boundary and drainage works', projectType:'Railway Project', location:'Pune', clientPOC:'Manoj Kulkarni', clientPOCDesignation:'Site Engineer', clientMobile:'9822076543', clientEmail:'manoj.kulkarni@mes.example.com', product:'U Drain', estimatedValue:0.95, priority:'Cold', dealStage:'3. Meeting Done / Ongoing Talk', salesPerson:A, dateLogged:'2026-06-28', followUpDate:'2026-07-21', nextAction:'Awaiting cantonment board clearance before quote finalization.'}),
-    mk({clientName:'Kolkata Metro Rail Corp', projectName:'Platform coping and drainage package', projectType:'Metro Project', location:'Kolkata', clientPOC:'Debashish Sen', clientPOCDesignation:'Executive Engineer', clientMobile:'9830065432', clientEmail:'debashish.sen@kmrc.example.com', product:'Coping Slabs', estimatedValue:4.5, priority:'Hot', dealStage:'5. Expected Order / PO Awaited', salesPerson:K, dateLogged:'2026-06-15', followUpDate:'2026-07-10', nextAction:'Follow up on PO — commercial terms already agreed.', stageChangedDate:'2026-07-03', nextActionChangedDate:'2026-07-03',
-      stageHistory:[
-        {stage:'1. New Lead', startDate:'2026-06-15', endDate:'2026-06-18'},
-        {stage:'2. Meeting Planned / Scheduled', startDate:'2026-06-18', endDate:'2026-06-22'},
-        {stage:'3. Meeting Done / Ongoing Talk', startDate:'2026-06-22', endDate:'2026-06-27'},
-        {stage:'4. Quote Submitted', startDate:'2026-06-27', endDate:'2026-07-03'},
-        {stage:'5. Expected Order / PO Awaited', startDate:'2026-07-03', endDate:null}
-      ],
-      actionHistory:[
-        {text:'Share platform coping and drainage package proposal', setDate:'2026-06-15', endDate:'2026-06-19', actionType:'Internal', delayReason:''},
-        {text:'Coordinate technical clarification call', setDate:'2026-06-19', endDate:'2026-06-27', actionType:'External', delayReason:'Client technical team was unavailable during the scheduled window.'},
-        {text:'Finalize commercial terms and confirm value', setDate:'2026-06-27', endDate:'2026-07-03', actionType:'Internal', delayReason:''},
-        {text:'Follow up on PO — commercial terms already agreed.', setDate:'2026-07-03', endDate:null, actionType:'External', delayReason:''}
-      ],
-      followUpHistory:[
-        {label:'Share platform coping and drainage package proposal', targetDate:'2026-06-17', doneDate:'2026-06-19', delayReason:'', actionKey:'2026-06-15'},
-        {label:'Coordinate technical clarification call', targetDate:'2026-06-23', doneDate:'2026-06-27', delayReason:'Client technical team was unavailable during the scheduled window.', actionKey:'2026-06-19'},
-        {label:'Finalize commercial terms and confirm value', targetDate:'2026-07-01', doneDate:'2026-07-03', delayReason:'', actionKey:'2026-06-27'}
-      ]
-    }),
-    ...genPoolOrders(A, K, mk),
-    ...genPoolOrders(A, K, mk)
-  ];
-  state.orders = orders;
-  await storageSet(K_ORDERS, state.orders);
-
-  const byClient = name => orders.find(o=>o.clientName===name);
-
-  /* Shared small helpers for the coordination/lost-order generators below (kept local to
-     runSeed — distinct from the identically-named helpers scoped inside genPoolOrders). */
-  function rand(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
-  function randInt(a,b){ return a+Math.floor(Math.random()*(b-a+1)); }
-  function addDays(dateStr, n){ const d=new Date(dateStr); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
-
-  const coordination = [
-    { id:uid(), dateLogged:'2026-06-02', orderId: byClient('Gaya Railway Station (RVNL)').id, clientName:'Gaya Railway Station (RVNL)', projectName: byClient('Gaya Railway Station (RVNL)').projectName,
-      category:'Mould scheduling', activity:'Split the standard 2000mm mould into four 490mm sections to match the platform segment layout.', support:'Capex sign-off needed for new mould tooling before committing delivery date.',
-      fulfillment:'Pending with plant', targetDate:'2026-06-20', supportDate:'2026-06-27' },
-    { id:uid(), dateLogged:'2026-06-25', orderId: byClient('GHMC Hyderabad').id, clientName:'GHMC Hyderabad', projectName: byClient('GHMC Hyderabad').projectName,
-      category:'Mix design trial', activity:'M-40 grade trial mix cast and cured for stormwater U-drain approval.', support:'Need QC lab to confirm 28-day curing test results before quoting.',
-      fulfillment:'Fulfilled by plant', targetDate:'2026-07-10', supportDate:'2026-07-08' },
-    { id:uid(), dateLogged:'2026-04-18', orderId: byClient('GMR Hyderabad Airport').id, clientName:'GMR Hyderabad Airport', projectName: byClient('GMR Hyderabad Airport').projectName,
-      category:'ISO compliance', activity:'Shared automated factory testing certificates required for airport authority vendor approval.', support:'',
-      fulfillment:'Not applicable', targetDate:'2026-04-25', supportDate:'2026-04-24' }
-  ];
-
-  /* Generate additional coordination entries so the tab has real volume beyond the 3
-     flagship rows above — drawn from a rotating set of realistic plant/engineering
-     coordination scenarios, attached to a spread of the pool-generated orders. */
-  const COORD_SCENARIOS = [
-    {category:'Mould scheduling', activity:'Coordinated custom mould tooling change to match this project\'s specific segment dimensions.', support:'Capex sign-off needed for new mould tooling before committing delivery date.'},
-    {category:'Mix design trial', activity:'Ran trial mix casting and curing cycle to validate the required strength grade before quoting.', support:'Need QC lab to confirm curing test results before final quote.'},
-    {category:'ISO compliance', activity:'Compiled factory testing and certification documents required for vendor empanelment.', support:'Awaiting updated ISO certificate renewal from the compliance team.'},
-    {category:'Design sign-off', activity:'Coordinated engineering review of client-supplied drawings against standard product profiles.', support:'Need engineering sign-off on dimensional deviations before quoting.'},
-    {category:'Production slot', activity:'Checked plant production slot availability against the client\'s expected delivery window.', support:'Need production planning to confirm an open slot before committing dates.'},
-    {category:'Logistics planning', activity:'Assessed transport and site-access constraints for delivering oversized precast units.', support:'Need the transport team to confirm route survey and permit status.'},
-    {category:'QC documentation', activity:'Assembled quality-control test certificates required for the client\'s technical evaluation.', support:''},
-    {category:'Site coordination', activity:'Coordinated with the site engineering team on foundation/interface details ahead of dispatch.', support:'Need site team to confirm interface drawings before casting begins.'},
-    {category:'Pricing clarification', activity:'Worked with estimation to clarify BOQ quantity assumptions flagged by the client.', support:'Need estimation to re-confirm BOQ split before resubmitting.'},
-    {category:'Sample approval', activity:'Sent physical sample units to client site for pre-order visual/dimensional approval.', support:''}
-  ];
-  const COORD_FULFILLMENT = ['Fulfilled by plant','Pending with plant','Not applicable'];
-  const coveredClients = new Set(coordination.map(c=>c.clientName));
-  const coordCandidates = orders.filter(o=>!coveredClients.has(o.clientName));
-  for(let i=0;i<coordCandidates.length;i+=2){
-    const o = coordCandidates[i];
-    const scenario = rand(COORD_SCENARIOS);
-    const fulfillment = rand(COORD_FULFILLMENT);
-    const dateLogged = addDays(o.dateLogged, randInt(4,15));
-    const targetDate = addDays(dateLogged, randInt(5,20));
-    // Fill the support-completion date on almost every row so Delay/Early/On Time
-    // colour-coding is visible throughout the list — only a small slice stays blank
-    // to still show what a still-pending entry looks like.
-    const supportDate = Math.random()<0.9 ? addDays(targetDate, randInt(-6,8)) : '';
-    coordination.push({ id:uid(), dateLogged, orderId:o.id, clientName:o.clientName, projectName:o.projectName,
-      category:scenario.category, activity:scenario.activity, support:scenario.support,
-      fulfillment, targetDate, supportDate });
-  }
-  state.coordination = coordination;
-  await storageSet(K_COORD, state.coordination);
-
-  const lostMeta = {
-    'NHAI Vijayawada Bypass': { competitorWhoWon:'L&T Construction', rootCause:'Quoted price ~8% above competitor; no value-engineering alternative offered in time.', improvementsRequired:'Build a fast-turnaround value-engineering option into future bypass/drainage bids.', actionOwner:'Vitrang (Estimation)', targetStart:'2026-07-15', targetEnd:'2026-08-15', plannedDays:31, status:'In progress', actualEndDate:'',
-      notes:[{date:'2026-03-12', by:'Rahul', text:'Reviewed BOQ — confirmed our M-50 mix was priced correctly but overall design was less optimized than L&T alternative.'}] },
-    'NTPC Khagaria': { competitorWhoWon:'Local unorganized fabricator', rootCause:'Absence of ISO-compliant automated factory testing capability — cited directly by client as decisive factor.', improvementsRequired:'Fast-track ISO 9001 automated testing certification at Hyderabad plant.', actionOwner:'Satish (Plant Head)', targetStart:'2026-08-01', targetEnd:'2026-09-30', plannedDays:60, status:'In progress', actualEndDate:'',
-      notes:[{date:'2026-03-02', by:'Rahul', text:'Confirmed with client POC that testing certification, not price, was the deciding factor.'}] },
-    'MSRDC Mumbai': { competitorWhoWon:'', rootCause:'Client shelved the project indefinitely due to budget reallocation — not a competitive loss.', improvementsRequired:'Re-engage in 6 months to check if the project is revived.', actionOwner:'Karan Mehta', targetStart:'2026-09-01', targetEnd:'2026-10-01', plannedDays:30, status:'Not started', actualEndDate:'', notes:[] }
-  };
-  const LOST_COMPETITORS = ['L&T Construction','A local unorganized fabricator','Ultratech Precast Products','An existing empanelled vendor','RDC Concrete India','Techno Precast Solutions','KEC Infra Products','A regional unlisted fabricator','Larsen Precast Systems','Godrej Precast Division'];
-  const LOST_IMPROVEMENTS = [
-    'Build a faster value-engineering option into future bids at this price point.',
-    'Fast-track the certification/compliance gap that was cited as the deciding factor.',
-    'Tighten quotation turnaround time to better match competitor lead times.',
-    'Re-engage the client in a few months once their budget cycle reopens.',
-    'Formalize the empanelment process earlier in the sales cycle for government clients.',
-    'Review standard mould/tooling capacity to quote faster delivery commitments.',
-    'Build a standing relationship with the procurement team ahead of the next tender cycle.'
-  ];
-  const LOST_OWNERS = ['Vitrang (Estimation)','Satish (Plant Head)','Karan Mehta','Aditi Sharma','Rahul (Sales Ops)','Priyanka (Quality)'];
-  const LOST_STATUS_POOL = ['In progress','In progress','Completed','Completed','Not started'];
-  state.lostOrders = orders.filter(o=>o.dealStage==='7. Closed Lost').map(o=>{
-    const m = lostMeta[o.clientName] || {};
-    const closed = o.closedDate || TODAY_ANCHOR;
-    const targetStart = m.targetStart || addDays(closed, randInt(3,10));
-    const plannedDays = m.plannedDays || randInt(14,60);
-    const targetEnd = m.targetEnd || addDays(targetStart, plannedDays);
-    const status = m.status || rand(LOST_STATUS_POOL);
-    let actualEndDate = m.actualEndDate;
-    if(actualEndDate===undefined || actualEndDate===''){
-      // Fill this on almost every row (regardless of status) so Delay/Early/On Time
-      // colour-coding is visible across the whole list — a small slice stays blank
-      // to still show what a genuinely pending entry looks like.
-      actualEndDate = Math.random()<0.9 ? addDays(targetEnd, randInt(-6,10)) : '';
-    }
-    return { id:uid(), linkedOrderId:o.id, dateAnalysed:o.closedDate, clientName:o.clientName, projectName:o.projectName,
-      estimatedValue:o.estimatedValue,
-      competitorWhoWon: m.competitorWhoWon!==undefined ? m.competitorWhoWon : rand(LOST_COMPETITORS),
-      rootCause: m.rootCause || o.reasonLostWon || '',
-      improvementsRequired: m.improvementsRequired || rand(LOST_IMPROVEMENTS),
-      actionOwner: m.actionOwner || rand(LOST_OWNERS),
-      targetDate: targetEnd, targetStart, targetEnd, plannedDays, actualEndDate,
-      status, notes: m.notes||[] };
-  });
-  await storageSet(K_LOST, state.lostOrders);
-
-  state.activity = {
-    user1: { username:'user1', lastSeen: Date.now()-3*60*1000, lat:17.385, lng:78.4867, locationLabel:'Hyderabad, Telangana' },
-    user2: { username:'user2', lastSeen: Date.now()-5*60*60*1000, lat:13.0827, lng:80.2707, locationLabel:'Chennai, Tamil Nadu' }
-  };
-  await storageSet(K_ACTIVITY, state.activity);
+async function clearPipelineData(){
+  state.orders = [];
+  state.coordination = [];
+  state.lostOrders = [];
+  state.activity = {};
+  await Promise.all([
+    storageSet(K_ORDERS, state.orders),
+    storageSet(K_COORD, state.coordination),
+    storageSet(K_LOST, state.lostOrders),
+    storageSet(K_ACTIVITY, state.activity),
+    storageSet(K_DATA_VERSION, {v: EMPTY_DATA_VERSION})
+  ]);
 }
 
 /* ================= FIELD ACTIVITY & LOCATION ================= */
@@ -1311,7 +754,7 @@ function renderLogin(){
       ${state.loginError?`<div class="login-error">${esc(state.loginError)}</div>`:''}
       <div id="google-signin-btn" class="google-btn-wrap"></div>
       <div class="access-note">
-        Sign in with your Google account. First person to sign in becomes the admin and can invite teammates by email under the Team tab — only invited addresses can sign in after that.
+        Sign in with your Google account. First person to sign in becomes the admin. Everyone else can sign in automatically as a user.
       </div>
     </div>
   </div>`;
@@ -1358,6 +801,7 @@ function handleGoogleCredential(response){
     match = { username: email, email, name: payload.name || email, picture: payload.picture || '', role: 'user' };
     state.users.push(match);
   }
+  if(!state.users.some(u=>u.role==='admin')) match.role = 'admin';
   // Keep name/photo fresh from the Google account on every sign-in.
   match.name = payload.name || match.name;
   match.picture = payload.picture || match.picture;
@@ -1444,15 +888,6 @@ function renderDashboard(){
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
         <div><b>Viewing ${esc(repName(viewAsUsername))}'s page</b><span style="color:var(--muted);font-size:12px;"> — signed in as Admin, read-only view</span></div>
         <button class="btn" onclick="backToTeamOverview()">\u2190 Back to team overview</button>
-      </div>
-    </div>`;
-  }
-
-  if(!isCeo && orders.length<=3){
-    html += `<div class="card" style="margin-bottom:16px;background:var(--amber-bg);border-color:var(--amber);">
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
-        <div style="font-size:13px;color:var(--amber-text,var(--text));"><b>Only ${orders.length} deal${orders.length===1?'':'s'} showing.</b> If you were expecting the full sample dataset, your browser likely kept an older, smaller set of test entries from before.</div>
-        <button class="btn btn-primary" onclick="forceReseed()">Reload sample data</button>
       </div>
     </div>`;
   }
@@ -3031,12 +2466,12 @@ function drawCharts(){
 function renderTeam(){
   return `
   <div class="card" style="margin-bottom:20px;">
-    <div class="section-title"><div><h2>Invite sales rep</h2><p>Add their Google email — they'll be able to sign in with that account, no password needed</p></div></div>
+    <div class="section-title"><div><h2>Add sales user</h2><p>Add a teammate manually, or let them sign in with Google and appear here automatically</p></div></div>
     <div class="grid2">
       <div class="field"><label>Full name</label><input id="t-name"></div>
       <div class="field"><label>Google email</label><input id="t-email" type="email" placeholder="e.g. name@company.com"></div>
     </div>
-    <div class="modal-actions" style="border:none;padding-top:6px;"><button class="btn btn-primary" onclick="addRep()">Send invite</button></div>
+    <div class="modal-actions" style="border:none;padding-top:6px;"><button class="btn btn-primary" onclick="addRep()">Add user</button></div>
   </div>
   <div class="card" style="margin-bottom:20px;">
     <div class="section-title"><div><h2>Team members</h2></div></div>
@@ -3045,27 +2480,13 @@ function renderTeam(){
       ${state.users.map(u=>`<tr><td>${esc(u.name)}</td><td>${esc(u.email||u.username)}</td><td>${u.role==='admin'?'Admin':'User'}</td>
         <td>${u.role==='user'?`<button class="link-btn btn-danger" onclick="removeRep('${u.username}')">Remove</button>`:''}</td></tr>`).join('')}
     </table></div>
-  </div>
-  <div class="card">
-    <div class="section-title"><div><h2>Sample data</h2><p>This tracker was pre-loaded with sample deals so you could see the dashboards and reports working end to end.</p></div></div>
-    <div style="display:flex;gap:10px;flex-wrap:wrap;">
-      <button class="btn btn-primary" onclick="forceReseed()">Reload sample data</button>
-      <button class="btn btn-danger" onclick="clearSampleData()">Clear all sample data</button>
-    </div>
-    <p class="top-note" style="margin-top:10px;margin-bottom:0;">Reload replaces everything currently in the tracker with a fresh 100-deal demo set. Use this if the data ever looks thin or out of date.</p>
   </div>`;
-}
-async function clearSampleData(){
-  if(!confirm('This permanently deletes every order, coordination log, and lost-order entry currently in the tracker \u2014 use this once you are ready to start logging real deals. Continue?')) return;
-  state.orders = []; state.coordination = []; state.lostOrders = [];
-  await Promise.all([storageSet(K_ORDERS, state.orders), storageSet(K_COORD, state.coordination), storageSet(K_LOST, state.lostOrders)]);
-  render();
 }
 async function addRep(){
   const name = grab('t-name'), email = grab('t-email').trim().toLowerCase();
   if(!name||!email){ alert('Fill in all fields.'); return; }
   if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ alert('Enter a valid email address.'); return; }
-  if(state.users.some(u=>u.email.toLowerCase()===email)){ alert('That email has already been invited.'); return; }
+  if(state.users.some(u=>(u.email||u.username).toLowerCase()===email)){ alert('That email is already in the user list.'); return; }
   state.users.push({username: email, email, role:'user', name, picture:''});
   await storageSet(K_USERS, state.users);
   render();
@@ -3077,74 +2498,45 @@ async function removeRep(username){
   render();
 }
 
-/* Migrates any users/orders/activity records left over from the old ceo/rep1/rep2 naming
-   scheme to the current admin/user1/user2 scheme. This matters because storage persists
-   across versions of this file opened in the same browser (see the SEED_VERSION note above) —
-   without this, a browser that already had the old accounts saved would keep them forever,
-   and admin/admin123 (or user1/user123) would never work because seeding only runs when the
-   stored user list is completely empty. Returns true if anything was changed so the caller
-   knows whether to persist the migrated data back to storage. */
+/* Migrates user and ownership records left over from older local versions. */
 function migrateLegacyRoles(){
-  const usernameMap = {ceo:'admin', rep1:'user1', rep2:'user2'};
   let changed = false;
-  state.users.forEach(u=>{
-    if(usernameMap[u.username]){ u.username = usernameMap[u.username]; changed = true; }
+  state.users = state.users.filter(u=>{
+    const username = (u.username||'').toLowerCase();
+    const email = (u.email||'').toLowerCase();
+    const hasGoogleEmail = username.includes('@') || email.includes('@');
+    if(!hasGoogleEmail){ changed = true; return false; }
     if(u.role==='ceo'){ u.role='admin'; changed = true; }
     if(u.role==='rep'){ u.role='user'; changed = true; }
     // Accounts created before Google Sign-In was added had a password instead of an email.
     // Drop the leftover password and fall back to the username so the record doesn't crash
-    // on u.email — the account can be edited (or re-invited with a real address) afterward.
+    // on u.email. The account can be edited afterward.
     if(u.password!==undefined){ delete u.password; changed = true; }
     if(u.email===undefined){ u.email = u.username; changed = true; }
-  });
-  state.orders.forEach(o=>{
-    if(usernameMap[o.salesPerson]){ o.salesPerson = usernameMap[o.salesPerson]; changed = true; }
-  });
-  Object.keys(usernameMap).forEach(oldKey=>{
-    if(state.activity[oldKey]){
-      const newKey = usernameMap[oldKey];
-      state.activity[newKey] = {...state.activity[oldKey], username:newKey};
-      delete state.activity[oldKey];
-      changed = true;
-    }
-  });
-  return changed;
-}
-
-function ensureDefaultUsers(){
-  const defaults = [
-    { username:'prathyush@patilgroup.com', email:'prathyush@patilgroup.com', name:'Prathyush', picture:'', role:'user' }
-  ];
-  let changed = false;
-  defaults.forEach(def=>{
-    const exists = state.users.some(u=>(u.email||u.username||'').toLowerCase()===def.email);
-    if(!exists){ state.users.push({...def}); changed = true; }
+    return true;
   });
   return changed;
 }
 
 /* ================= INIT ================= */
 async function init(){
-  const [u,o,c,l,a,v] = await Promise.all([storageGet(K_USERS), storageGet(K_ORDERS), storageGet(K_COORD), storageGet(K_LOST), storageGet(K_ACTIVITY), storageGet(K_SEEDVER)]);
+  const [u,o,c,l,a,v] = await Promise.all([storageGet(K_USERS), storageGet(K_ORDERS), storageGet(K_COORD), storageGet(K_LOST), storageGet(K_ACTIVITY), storageGet(K_DATA_VERSION)]);
   state.users = u || [];
   state.orders = o || [];
   state.coordination = c || [];
   state.lostOrders = l || [];
   state.activity = a || {};
   const migrated = migrateLegacyRoles();
-  const ensuredUsers = ensureDefaultUsers();
-  if(migrated || ensuredUsers){
-    await Promise.all([storageSet(K_USERS, state.users), storageSet(K_ORDERS, state.orders), storageSet(K_ACTIVITY, state.activity)]);
-  }
-  seedIfEmpty();
-  await seedDemoDataIfEmpty();
   const storedVersion = v && v.v ? v.v : null;
-  if(storedVersion !== SEED_VERSION){
-    if(state.orders.length <= 10){
-      // Small leftover test data (or none) — safe to assume this is still demo/testing, not real work.
-      await runSeed();
+  if(storedVersion !== EMPTY_DATA_VERSION){
+    if(storedVersion || state.orders.length || state.coordination.length || state.lostOrders.length){
+      await clearPipelineData();
+    } else {
+      await storageSet(K_DATA_VERSION, {v: EMPTY_DATA_VERSION});
     }
-    await storageSet(K_SEEDVER, {v: SEED_VERSION});
+  }
+  if(migrated){
+    await storageSet(K_USERS, state.users);
   }
   state.loaded = true;
   render();
