@@ -308,6 +308,7 @@ let state = {
   statsDate: new Date().toISOString().slice(0,10),
   modal:null, // {type:'order'|'coord'|'lost', data:{...}}
   loginError:'',
+  adminMode:'admin',
   viewingAsRep: null, // username the CEO is currently viewing the rep-page of
   dealCycleOrderId: null,
   dealCycleActionFilter: 'all',
@@ -1107,7 +1108,7 @@ async function runSeed(){
 /* ================= FIELD ACTIVITY & LOCATION ================= */
 async function pingActivity(){
   const u = state.currentUser;
-  if(!u || u.role!=='user') return;
+  if(!u || currentRole()!=='user') return;
   const existing = state.activity[u.username] || {};
   state.activity[u.username] = { ...existing, username:u.username, lastSeen: Date.now() };
   await storageSet(K_ACTIVITY, state.activity);
@@ -1151,10 +1152,26 @@ function nextFollowUpFor(username){
 /* ================= DATA HELPERS ================= */
 /* Admin is strictly view-only across deals, coordination, and lost-order analysis \u2014
    this single check gates every mutating action and editable control in those areas. */
-function isAdmin(){ return !!(state.currentUser && state.currentUser.role==='admin'); }
+function isAdminAccount(){ return !!(state.currentUser && state.currentUser.role==='admin'); }
+function currentRole(){
+  if(!state.currentUser) return '';
+  return isAdminAccount() && state.adminMode==='user' ? 'user' : state.currentUser.role;
+}
+function currentUserView(){
+  return state.currentUser ? { ...state.currentUser, role: currentRole() } : null;
+}
+function setAdminMode(mode){
+  if(!isAdminAccount()) return;
+  state.adminMode = mode==='user' ? 'user' : 'admin';
+  state.viewingAsRep = null;
+  state.activeTab = 'dashboard';
+  render();
+  pingActivity();
+}
+function isAdmin(){ return currentRole()==='admin'; }
 function myOrders(){
   if(!state.currentUser) return [];
-  if(state.currentUser.role==='admin') return state.orders;
+  if(isAdmin()) return state.orders;
   return state.orders.filter(o=>o.salesPerson===state.currentUser.username);
 }
 function repName(username){
@@ -1328,7 +1345,7 @@ function handleGoogleCredential(response){
 
   if(state.users.length===0){
     // Bootstrap: nobody has ever signed in on this tracker yet, so the first Google
-    // account to do so becomes the admin/owner. Everyone after this must be invited.
+    // account to do so becomes the admin/owner. Everyone after this becomes a user.
     const admin = { username: email, email, name: payload.name || email, picture: payload.picture || '', role: 'admin' };
     state.users.push(admin);
     storageSet(K_USERS, state.users);
@@ -1336,11 +1353,10 @@ function handleGoogleCredential(response){
     return;
   }
 
-  const match = state.users.find(u=>u.email.toLowerCase()===email);
+  let match = state.users.find(u=>(u.email||u.username).toLowerCase()===email);
   if(!match){
-    state.loginError = `${payload.email} is not on the invited list for this tracker. Ask your admin to add you under the Team tab.`;
-    render();
-    return;
+    match = { username: email, email, name: payload.name || email, picture: payload.picture || '', role: 'user' };
+    state.users.push(match);
   }
   // Keep name/photo fresh from the Google account on every sign-in.
   match.name = payload.name || match.name;
@@ -1349,13 +1365,13 @@ function handleGoogleCredential(response){
   finishLogin(match);
 }
 function finishLogin(user){
-  state.loginError=''; state.currentUser=user; state.activeTab='dashboard'; render();
+  state.loginError=''; state.currentUser=user; state.adminMode=user.role==='admin'?'admin':'user'; state.activeTab='dashboard'; render();
   pingActivity();
   if(window.__pingTimer) clearInterval(window.__pingTimer);
   window.__pingTimer = setInterval(pingActivity, 5*60*1000);
 }
 function doLogout(){
-  state.currentUser=null; state.viewingAsRep=null;
+  state.currentUser=null; state.viewingAsRep=null; state.adminMode='admin';
   if(window.__pingTimer) clearInterval(window.__pingTimer);
   if(window.google && google.accounts && google.accounts.id) google.accounts.id.disableAutoSelect();
   render();
@@ -3095,6 +3111,18 @@ function migrateLegacyRoles(){
   return changed;
 }
 
+function ensureDefaultUsers(){
+  const defaults = [
+    { username:'prathyush@patilgroup.com', email:'prathyush@patilgroup.com', name:'Prathyush', picture:'', role:'user' }
+  ];
+  let changed = false;
+  defaults.forEach(def=>{
+    const exists = state.users.some(u=>(u.email||u.username||'').toLowerCase()===def.email);
+    if(!exists){ state.users.push({...def}); changed = true; }
+  });
+  return changed;
+}
+
 /* ================= INIT ================= */
 async function init(){
   const [u,o,c,l,a,v] = await Promise.all([storageGet(K_USERS), storageGet(K_ORDERS), storageGet(K_COORD), storageGet(K_LOST), storageGet(K_ACTIVITY), storageGet(K_SEEDVER)]);
@@ -3104,7 +3132,8 @@ async function init(){
   state.lostOrders = l || [];
   state.activity = a || {};
   const migrated = migrateLegacyRoles();
-  if(migrated){
+  const ensuredUsers = ensureDefaultUsers();
+  if(migrated || ensuredUsers){
     await Promise.all([storageSet(K_USERS, state.users), storageSet(K_ORDERS, state.orders), storageSet(K_ACTIVITY, state.activity)]);
   }
   seedIfEmpty();
