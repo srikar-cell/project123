@@ -1300,6 +1300,54 @@
       })[key] || key;
     }
 
+    /* ---------- Delivery mechanism ----------
+       Previously this used fetch(..., {mode:'no-cors'}). That mode makes the
+       response completely opaque (by design, for privacy) AND has a known
+       failure pattern with Google Apps Script specifically: Apps Script web
+       apps respond to every request with a 302 redirect to a
+       script.googleusercontent.com execution URL, and some browsers/fetch
+       implementations silently drop the POST body (or downgrade the method)
+       when auto-following that redirect. Because no-cors hides the response,
+       you'd never see this happening - the fetch() call "succeeds" from the
+       page's point of view even if nothing was ever written.
+
+       Fix: submit via a real HTML <form> POST into a hidden <iframe>. Native
+       form submissions handle cross-site POST + redirect exactly the way
+       browsers have handled it for 25+ years - no CORS preflight, no fetch
+       redirect ambiguity, no opaque-response guesswork. We don't need to read
+       the response anyway (this is fire-and-forget sync), so losing the
+       ability to read it costs us nothing and we gain reliability.
+
+       A fetch/no-cors fallback is kept in case form submission is ever
+       blocked (e.g. by an extremely strict CSP), and every attempt is logged
+       to the console so you can see it happening in DevTools. */
+    let __syncFormReady = false;
+    function ensureSyncForm() {
+      if (__syncFormReady) return;
+      let iframe = document.getElementById('sheetSyncFrame');
+      if (!iframe) {
+        iframe = document.createElement('iframe');
+        iframe.name = 'sheetSyncFrame';
+        iframe.id = 'sheetSyncFrame';
+        iframe.style.display = 'none';
+        document.body.appendChild(iframe);
+      }
+      let form = document.getElementById('sheetSyncForm');
+      if (!form) {
+        form = document.createElement('form');
+        form.id = 'sheetSyncForm';
+        form.method = 'POST';
+        form.target = 'sheetSyncFrame';
+        form.style.display = 'none';
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'payload';
+        input.id = 'sheetSyncPayloadField';
+        form.appendChild(input);
+        document.body.appendChild(form);
+      }
+      __syncFormReady = true;
+    }
     function syncToGoogleSheet(key, val) {
       if (!GOOGLE_SHEET_WEB_APP_URL || !GOOGLE_SHEET_SYNC_KEYS.has(key)) return;
       const payload = {
@@ -1317,15 +1365,53 @@
         records: Array.isArray(val) ? val : [val],
         data: val
       };
+      const payloadStr = JSON.stringify(payload);
+      console.log('[GSheet sync] sending "' + sheetNameForKey(key) + '" via hidden form —', payloadStr.length, 'bytes');
 
-      fetch(GOOGLE_SHEET_WEB_APP_URL, {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify(payload),
-        keepalive: JSON.stringify(payload).length < 60000
-      }).catch(e => console.warn('Google Sheet sync failed', key, e));
+      try {
+        ensureSyncForm();
+        const form = document.getElementById('sheetSyncForm');
+        const field = document.getElementById('sheetSyncPayloadField');
+        field.value = payloadStr;
+        form.action = GOOGLE_SHEET_WEB_APP_URL;
+        form.submit();
+      } catch (formErr) {
+        console.warn('[GSheet sync] hidden-form submit failed, falling back to fetch/no-cors', formErr);
+        fetch(GOOGLE_SHEET_WEB_APP_URL, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: payloadStr,
+          keepalive: payloadStr.length < 60000
+        }).then(() => console.log('[GSheet sync] fetch fallback sent for', sheetNameForKey(key)))
+          .catch(e => console.warn('[GSheet sync] fetch fallback also failed', key, e));
+      }
     }
+
+    /* ---------- Diagnostic: run testGoogleSheetSync() in the browser console -----
+       Unlike the sync above, this uses a normal (non no-cors) fetch so the actual
+       response or error is readable. This is the single fastest way to tell
+       whether the Apps Script deployment is reachable at all:
+         - Prints a JSON body           -> deployment is alive and public.
+         - Prints a CORS error          -> request reached Google, browser just
+                                            can't read the response (still tells
+                                            you the deployment responded).
+         - Prints "Failed to fetch" / network error -> request never reached
+                                            Google at all (wrong URL, deployment
+                                            not deployed, or DNS/network blocked). */
+    window.testGoogleSheetSync = async function () {
+      console.log('[GSheet test] GET', GOOGLE_SHEET_WEB_APP_URL + '?sheet=Orders');
+      try {
+        const res = await fetch(GOOGLE_SHEET_WEB_APP_URL + '?sheet=Orders');
+        const text = await res.text();
+        console.log('[GSheet test] HTTP status:', res.status);
+        console.log('[GSheet test] body:', text);
+        return { status: res.status, body: text };
+      } catch (e) {
+        console.error('[GSheet test] request never reached Google:', e);
+        return { error: String(e) };
+      }
+    };
 
     async function storageGet(key) {
       try {
