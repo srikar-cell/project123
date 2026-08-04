@@ -1847,8 +1847,8 @@
       ${needsSetup ? `<div class="login-setup-warning"><b>Setup needed:</b> add your Google OAuth Client ID to the <span class="mono">GOOGLE_CLIENT_ID</span> constant near the top of the script before Sign in with Google will work.</div>` : ''}
       ${state.loginError ? `<div class="login-error">${esc(state.loginError)}</div>` : ''}
       <div id="google-signin-btn" class="google-btn-wrap"></div>
-      <div class="access-note">
-        Sign in with your Google account. First person to sign in becomes the admin. Everyone else can sign in automatically as a user.
+      <div class="access-note" style="text-align: center;">
+        Secure Single Sign-On (SSO) for authorized employees. Use your corporate Google account to access the dashboard.
       </div>
     </div>
   </div>`;
