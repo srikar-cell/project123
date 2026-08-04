@@ -1291,6 +1291,13 @@
     const GOOGLE_SHEET_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbz9lR0R2uEg5Ie_zYOdVViT8OB2ErcGaGy-BbWg4_NlkmPevvOdAeOAu3Ul-if6l4Op/exec';
     const GOOGLE_SHEET_SYNC_KEYS = new Set([K_USERS, K_ORDERS, K_COORD, K_LOST]);
 
+    /* ================= HARDCODED ADMIN EMAILS =================
+       Emails listed here are ALWAYS granted admin role on sign-in,
+       regardless of join order or stored role. Add more emails as needed. */
+    const ADMIN_EMAILS = new Set([
+      'siddharth@patilgroup.com'
+    ]);
+
     function sheetNameForKey(key) {
       return ({
         [K_USERS]: 'Users',
@@ -1852,7 +1859,14 @@
     function renderGoogleButton() {
       if (GOOGLE_CLIENT_ID === 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com') return;
       const target = document.getElementById('google-signin-btn');
-      if (!target || !window.google || !google.accounts || !google.accounts.id) return;
+      if (!target) return;
+      
+      // If Google library is not loaded yet, wait and try again shortly
+      if (!window.google || !google.accounts || !google.accounts.id) {
+        setTimeout(renderGoogleButton, 100);
+        return;
+      }
+      
       google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleGoogleCredential });
       google.accounts.id.renderButton(target, { theme: 'outline', size: 'large', width: 320, text: 'signin_with' });
     }
@@ -1888,7 +1902,9 @@
         match = { username: email, email, name: payload.name || email, picture: payload.picture || '', role: 'user' };
         state.users.push(match);
       }
-      if (!state.users.some(u => u.role === 'admin')) match.role = 'admin';
+      // Always grant admin to hardcoded admin emails.
+      if (ADMIN_EMAILS.has(email)) match.role = 'admin';
+      else if (!state.users.some(u => u.role === 'admin')) match.role = 'admin';
       // Keep name/photo fresh from the Google account on every sign-in.
       match.name = payload.name || match.name;
       match.picture = payload.picture || match.picture;
