@@ -1930,21 +1930,22 @@
       const u = state.currentUser;
       const initials = u.name.split(' ').map(x => x[0]).slice(0, 2).join('').toUpperCase();
       const tabs = [
-        ['dashboard', u.role === 'admin' ? 'Team overview' : 'My pipeline'],
+        ['dashboard', currentRole() === 'admin' ? 'Team overview' : 'My pipeline'],
         ['coordination', 'Coordination'],
         ['dealcycle', 'Deal cycle'],
         ['lost', 'Lost order analysis'],
         ['stats', 'Reports']
       ];
-      if (u.role === 'admin') tabs.push(['team', 'Team logins']);
+      if (currentRole() === 'admin') tabs.push(['team', 'Team logins']);
 
       return `
   <div class="topbar">
     <div class="brand"><div class="logo"><img src="data:image/jpeg;base64,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" alt="Patil Group logo"></div><div><h1>Patil Group</h1><div class="tag">Pipeline Control — B2B infrastructure sales tracker</div></div></div>
     <div class="who">
-      ${u.role === 'user' ? `<button class="btn btn-primary" onclick="openOrderModal()">+ New Lead</button>` : ''}
+      ${currentRole() === 'user' ? `<button class="btn btn-primary" onclick="openOrderModal()">+ New Lead</button>` : ''}
+      ${isAdminAccount() ? `<button class="btn btn-gold" onclick="setAdminMode('${state.adminMode === 'admin' ? 'user' : 'admin'}')">${state.adminMode === 'admin' ? 'Switch to User View' : 'Switch to Admin View'}</button>` : ''}
       <div class="avatar">${esc(initials)}</div>
-      <div><div class="name">${esc(u.name)}</div><div class="role">${u.role === 'admin' ? 'Admin' : 'User'}</div></div>
+      <div><div class="name">${esc(u.name)}</div><div class="role">${isAdminAccount() ? (state.adminMode === 'user' ? 'Admin (User Mode)' : 'Admin') : 'User'}</div></div>
       <button class="btn" onclick="doLogout()">Sign out</button>
     </div>
   </div>
@@ -1971,7 +1972,7 @@
     /* ================= DASHBOARD ================= */
     function renderDashboard() {
       const u = state.currentUser;
-      const isCeo = u.role === 'admin';
+      const isCeo = currentRole() === 'admin';
       const viewAsUsername = isCeo ? state.viewingAsRep : null;
       const viewAsRepMode = !!viewAsUsername;
       const orders = viewAsRepMode ? state.orders.filter(o => o.salesPerson === viewAsUsername) : myOrders();
@@ -2081,7 +2082,7 @@
     function setDashboardSubTab(v) { state.dashboardSubTab = v; render(); }
     async function downloadAllLeads(filterData) {
       if (typeof XLSX === 'undefined') { alert('Excel export library did not load — check your internet connection and try again.'); return; }
-      const isCeo = state.currentUser.role === 'admin';
+      const isCeo = currentRole() === 'admin';
       const viewAsUsername = isCeo ? state.viewingAsRep : null;
       let orders = viewAsUsername ? state.orders.filter(o => o.salesPerson === viewAsUsername) : myOrders();
       if (filterData) {
@@ -2697,7 +2698,7 @@
     function renderOrderModal() {
       const d = state.modal.data;
       const isEdit = !!d.id;
-      const canPickRep = state.currentUser.role === 'admin';
+      const canPickRep = isAdminAccount();
       const actionDelayDays = pendingActionDelayDays(d);
       const curType = activeActionType(d);
       const productIsPreset = PRODUCTS.includes(d.product);
@@ -2960,7 +2961,7 @@
     /* ================= COORDINATION ================= */
     function renderCoordination() {
       const u = state.currentUser;
-      const isCeo = u.role === 'admin';
+      const isCeo = currentRole() === 'admin';
       const orders = myOrders();
       const orderIds = new Set(orders.map(o => o.id));
       const logs = state.coordination.filter(c => isCeo || orderIds.has(c.orderId));
@@ -3062,7 +3063,7 @@
     async function downloadCoordinationLog(filterData) {
       if (typeof XLSX === 'undefined') { alert('Excel export library did not load — check your internet connection and try again.'); return; }
       const u = state.currentUser;
-      const isCeo = u.role === 'admin';
+      const isCeo = currentRole() === 'admin';
       const orders = myOrders();
       const orderIds = new Set(orders.map(o => o.id));
       let logs = state.coordination.filter(c => isCeo || orderIds.has(c.orderId));
@@ -3088,7 +3089,7 @@
       return order ? totalCycleDays(order) : '';
     }
     function renderLost() {
-      const isCeo = state.currentUser.role === 'admin';
+      const isCeo = currentRole() === 'admin';
       const myClientNames = myOrders().map(o => o.clientName);
       const list = state.lostOrders.filter(l => isCeo || myClientNames.includes(l.clientName));
       const sorted = list.slice().sort((a, b) => (b.dateAnalysed || '').localeCompare(a.dateAnalysed || ''));
@@ -3232,7 +3233,7 @@
     }
     async function downloadLostOrders(filterData) {
       if (typeof XLSX === 'undefined') { alert('Excel export library did not load — check your internet connection and try again.'); return; }
-      const isCeo = state.currentUser.role === 'admin';
+      const isCeo = currentRole() === 'admin';
       const myClientNames = myOrders().map(o => o.clientName);
       let list = state.lostOrders.filter(l => isCeo || myClientNames.includes(l.clientName));
       if (filterData) list = list.filter(l => filterByDateRange(l.dateAnalysed, filterData));
@@ -3303,7 +3304,7 @@
 
     /* ================= STATS ================= */
     function renderStats() {
-      const isCeo = state.currentUser.role === 'admin';
+      const isCeo = currentRole() === 'admin';
       const ranges = [['day', 'Today'], ['week', 'This week'], ['month', 'This month'], ['custom', 'Custom range'], ['all', 'All time']];
 
       return `
@@ -3487,7 +3488,7 @@
 
     let charts = {};
     function drawCharts() {
-      const isCeo = state.currentUser.role === 'admin';
+      const isCeo = currentRole() === 'admin';
       let s;
 
       const ordersToChart = isCeo ? reps().flatMap(r => filteredOrdersFor(r.username)) : filteredOrdersFor(state.currentUser.username);
