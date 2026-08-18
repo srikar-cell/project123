@@ -1440,6 +1440,7 @@
     let state = {
       users: [], orders: [], coordination: [], lostOrders: [], activity: {},
       currentUser: null,
+      customFieldsConfig: [],
       loaded: false,
       activeTab: 'dashboard',
       statsRange: 'week',
@@ -1461,7 +1462,7 @@
 
     const ACTIVE_WINDOW_MIN = 60; // a rep counts as "in field" if seen within this many minutes
 
-    const STAGES = [
+    let STAGES = [
       "1. New Lead",
       "2. Meeting Planned / Scheduled",
       "3. Meeting Done / Ongoing Talk",
@@ -1470,11 +1471,11 @@
       "6. Closed Won (Client!)",
       "7. Closed Lost"
     ];
-    const OPEN_STAGES = STAGES.slice(0, 5);
-    const PROJECT_TYPES = ["Railway Project", "Airport (AAI) Project", "Metro Project", "Bus Stand Project", "Drainage Project", "Other"];
-    const LEAD_SOURCE = ["Inbound", "Outbound"];
-    const PRIORITIES = ["Hot", "Warm", "Cold"];
-    const PRODUCTS = ["U Drain", "Culverts", "Manhole Covers", "Coping Slabs", "Toilet Blocks", "Crash Barriers", "Others"];
+    let OPEN_STAGES = STAGES.slice(0, 5);
+    let PROJECT_TYPES = ["Railway Project", "Airport (AAI) Project", "Metro Project", "Bus Stand Project", "Drainage Project", "Other"];
+    let LEAD_SOURCE = ["Inbound", "Outbound"];
+    let PRIORITIES = ["Hot", "Warm", "Cold"];
+    let PRODUCTS = ["U Drain", "Culverts", "Manhole Covers", "Coping Slabs", "Toilet Blocks", "Crash Barriers", "Others"];
 
     function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
     function todayStr() { return new Date().toISOString().slice(0, 10); }
@@ -1930,22 +1931,21 @@
       const u = state.currentUser;
       const initials = u.name.split(' ').map(x => x[0]).slice(0, 2).join('').toUpperCase();
       const tabs = [
-        ['dashboard', currentRole() === 'admin' ? 'Team overview' : 'My pipeline'],
+        ['dashboard', u.role === 'admin' ? 'Team overview' : 'My pipeline'],
         ['coordination', 'Coordination'],
         ['dealcycle', 'Deal cycle'],
         ['lost', 'Lost order analysis'],
         ['stats', 'Reports']
       ];
-      if (currentRole() === 'admin') tabs.push(['team', 'Team logins']);
+      if (u.role === 'admin') tabs.push(['team', 'Team & Settings']);
 
       return `
   <div class="topbar">
     <div class="brand"><div class="logo"><img src="data:image/jpeg;base64,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" alt="Patil Group logo"></div><div><h1>Patil Group</h1><div class="tag">Pipeline Control — B2B infrastructure sales tracker</div></div></div>
     <div class="who">
-      ${currentRole() === 'user' ? `<button class="btn btn-primary" onclick="openOrderModal()">+ New Lead</button>` : ''}
-      ${isAdminAccount() ? `<button class="btn btn-gold" onclick="setAdminMode('${state.adminMode === 'admin' ? 'user' : 'admin'}')">${state.adminMode === 'admin' ? 'Switch to User View' : 'Switch to Admin View'}</button>` : ''}
+      <button class="btn btn-primary" onclick="openOrderModal()">+ New Lead</button>
       <div class="avatar">${esc(initials)}</div>
-      <div><div class="name">${esc(u.name)}</div><div class="role">${isAdminAccount() ? (state.adminMode === 'user' ? 'Admin (User Mode)' : 'Admin') : 'User'}</div></div>
+      <div><div class="name">${esc(u.name)}</div><div class="role">${u.role === 'admin' ? 'Admin' : 'User'}</div></div>
       <button class="btn" onclick="doLogout()">Sign out</button>
     </div>
   </div>
@@ -1972,7 +1972,7 @@
     /* ================= DASHBOARD ================= */
     function renderDashboard() {
       const u = state.currentUser;
-      const isCeo = currentRole() === 'admin';
+      const isCeo = u.role === 'admin';
       const viewAsUsername = isCeo ? state.viewingAsRep : null;
       const viewAsRepMode = !!viewAsUsername;
       const orders = viewAsRepMode ? state.orders.filter(o => o.salesPerson === viewAsUsername) : myOrders();
@@ -2039,14 +2039,14 @@
       ${attention.length ? `<div class="table-wrap" data-rkey="dashboard-attention"><table>
         <tr><th>Client</th>${showCeoColumns ? '<th>Sales rep</th>' : ''}<th>Stage</th><th>Priority</th><th>Next Follow-up date</th><th>Next Follow up Action</th><th></th></tr>
         ${attention.map(o => `
-          <tr ${isAdmin() ? '' : `class="clickable" onclick="openUpdateModal('${o.id}')"`}>
+          <tr class="clickable" onclick="openUpdateModal('${o.id}')">
             <td><b>${esc(o.clientName)}</b><br><span style="color:var(--muted);font-size:11.5px;">${esc(o.projectName || '')}</span></td>
             ${showCeoColumns ? `<td>${esc(repName(o.salesPerson))}</td>` : ''}
             <td>${badgeForStage(o.dealStage)}</td>
             <td>${badgeForPriority(o.priority)}</td>
             <td>${isOverdue(o.followUpDate) ? '<span class="badge badge-overdue">Overdue ' + fmtDate(o.followUpDate) + '</span>' : fmtDate(o.followUpDate)}</td>
             <td style="max-width:200px;">${esc(o.nextAction || '—')}</td>
-            <td style="white-space:nowrap;">${isAdmin() ? '' : `<button class="link-btn" onclick="event.stopPropagation();openUpdateModal('${o.id}')">Update</button>`}<button class="link-btn" style="color:var(--red);margin-left:6px;" onclick="event.stopPropagation();deleteOrderDirect('${o.id}')">Delete</button></td>
+            <td style="white-space:nowrap;"><button class="link-btn" onclick="event.stopPropagation();openUpdateModal('${o.id}')">Update</button><button class="link-btn" style="color:var(--red);margin-left:6px;" onclick="event.stopPropagation();deleteOrderDirect('${o.id}')">Delete</button></td>
           </tr>`).join('')}
       </table></div>` : `<div class="empty">Nothing urgent right now — all caught up.</div>`}
     </div>`;
@@ -2082,7 +2082,7 @@
     function setDashboardSubTab(v) { state.dashboardSubTab = v; render(); }
     async function downloadAllLeads(filterData) {
       if (typeof XLSX === 'undefined') { alert('Excel export library did not load — check your internet connection and try again.'); return; }
-      const isCeo = currentRole() === 'admin';
+      const isCeo = state.currentUser.role === 'admin';
       const viewAsUsername = isCeo ? state.viewingAsRep : null;
       let orders = viewAsUsername ? state.orders.filter(o => o.salesPerson === viewAsUsername) : myOrders();
       if (filterData) {
@@ -2210,6 +2210,9 @@
           'Worst Delayed Follow-up Time (days)': df ? df.days : '',
           'Reason for Worst Follow-up Delay': df ? df.delayReason : '',
           'Reason for Win/Loss': o.reasonLostWon || ''
+          ...(state.customFieldsConfig
+            .filter(f => f.type !== 'button')
+            .reduce((acc, f) => { acc[f.label] = (o.customFields && o.customFields[f.id]) || ''; return acc; }, {}))
         };
       });
     }
@@ -2432,21 +2435,19 @@
 
     /* ================= ORDER MODAL (Add / Edit) ================= */
     function openOrderModal(id) {
-      if (isAdmin()) return; // admins have view-only access — no lead entry or editing
       const data = id ? state.orders.find(o => o.id === id) : {
-        id: null, dateLogged: todayStr(), leadSourceType: 'Outbound', leadSourceName: '',
-        salesPerson: state.currentUser.role === 'user' ? state.currentUser.username : (reps()[0]?.username || ''),
+        id: null, dateLogged: todayStr(), leadSourceType: LEAD_SOURCE[0] || 'Outbound', leadSourceName: '',
+        salesPerson: state.currentUser.role === 'admin' ? (reps()[0]?.username || '') : state.currentUser.username,
         clientName: '', clientPOC: '', clientPOCDesignation: '', clientMobile: '', clientEmail: '',
         product: '', projectName: '', projectType: PROJECT_TYPES[0], location: '', estimatedValue: '',
-        dealStage: STAGES[0], priority: 'Warm', reasonLostWon: '', closedDate: '', stageChangedDate: '',
-        nextAction: '', followUpDate: '', updates: [],
+        dealStage: STAGES[0], priority: PRIORITIES[0] || 'Warm', reasonLostWon: '', closedDate: '', stageChangedDate: '',
+        nextAction: '', followUpDate: '', updates: [], customFields: {},
         nextActionChangedDate: '', actionHistory: [], followUpHistory: [], stageHistory: []
       };
       state.modal = { type: 'order', data: JSON.parse(JSON.stringify(data)) };
       render();
     }
     function openUpdateModal(id) {
-      if (isAdmin()) return; // admins have view-only access — no updating deals
       const o = state.orders.find(x => x.id === id);
       if (!o) return;
       state.modal = { type: 'quickupdate', data: JSON.parse(JSON.stringify(o)) };
@@ -2636,7 +2637,6 @@
       dateEl.disabled = locked;
     }
     async function saveQuickUpdate(id) {
-      if (isAdmin()) return;
       const order = state.orders.find(o => o.id === id);
       if (!order) return;
       const wasLost = order.dealStage && order.dealStage.startsWith('7.');
@@ -2818,6 +2818,22 @@
           <button class="btn" onclick="addOrderUpdate('${d.id}')">Add update</button>
         </div>
       </div>` : `<div class="top-note" style="margin-top:8px;">Save this order first, then come back to log dated updates here.</div>`}
+      ${state.customFieldsConfig.length ? `
+      <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">
+        <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px;">Additional Fields</div>
+        <div class="grid2">
+        ${state.customFieldsConfig.filter(f => f.type !== 'button').map(f => `
+          <div class="field" style="${f.fullWidth ? 'grid-column:1/-1;' : ''}">
+            <label>${esc(f.label)}</label>
+            ${f.type === 'dropdown'
+              ? `<select id="cf-${f.id}"><option value=""></option>${(f.options || []).map(o => `<option value="${esc(o)}" ${(d.customFields && d.customFields[f.id]) === o ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`
+              : `<input id="cf-${f.id}" value="${esc((d.customFields && d.customFields[f.id]) || '')}">`
+            }
+          </div>`).join('')}
+        </div>
+        ${state.customFieldsConfig.filter(f => f.type === 'button').map(f => `
+          <button class="btn" style="margin-top:6px;" onclick="${esc(f.action)}">${esc(f.label)}</button>`).join('')}
+      </div>` : ''}
       <div class="modal-actions">
         ${isEdit ? `<button class="btn btn-danger" onclick="deleteOrder('${d.id}')" style="margin-right:auto;">Delete</button>` : ''}
         <button class="btn" onclick="closeModal()">Cancel</button>
@@ -2834,7 +2850,6 @@
     }
     function grab(id) { const el = document.getElementById(id); return el ? el.value : ''; }
     async function saveOrder() {
-      if (isAdmin()) return;
       const d = state.modal.data;
       const wasLost = d.dealStage && d.dealStage.startsWith('7.');
       const newStage = grab('f-dealStage');
@@ -2910,7 +2925,15 @@
         followUpHistory: tracking.followUpHistory,
         reasonLostWon: grab('f-reasonLostWon'),
         closedDate: closedDate,
-        updates: d.updates || []
+        updates: d.updates || [],
+        customFields: (() => {
+          const cf = d.customFields || {};
+          state.customFieldsConfig.filter(f => f.type !== 'button').forEach(f => {
+            const el = document.getElementById('cf-' + f.id);
+            if (el) cf[f.id] = el.value;
+          });
+          return cf;
+        })()
       };
       const idx = state.orders.findIndex(o => o.id === updated.id);
       if (idx >= 0) state.orders[idx] = updated; else state.orders.push(updated);
@@ -2932,7 +2955,6 @@
       closeModal();
     }
     async function addOrderUpdate(orderId) {
-      if (isAdmin()) return;
       const text = grab('order-update-text').trim();
       if (!text) return;
       const order = state.orders.find(o => o.id === orderId);
@@ -2944,7 +2966,6 @@
       render();
     }
     async function deleteOrder(id) {
-      if (isAdmin()) return;
       if (!confirm('Delete this order permanently?')) return;
       state.orders = state.orders.filter(o => o.id !== id);
       await storageSet(K_ORDERS, state.orders);
@@ -2961,7 +2982,7 @@
     /* ================= COORDINATION ================= */
     function renderCoordination() {
       const u = state.currentUser;
-      const isCeo = currentRole() === 'admin';
+      const isCeo = u.role === 'admin';
       const orders = myOrders();
       const orderIds = new Set(orders.map(o => o.id));
       const logs = state.coordination.filter(c => isCeo || orderIds.has(c.orderId));
@@ -3021,7 +3042,7 @@
              <td>${esc(c.fulfillment || '—')}</td>
              <td>${esc(c.support || '—')}</td>
              <td>${fmtDate(c.targetDate)}</td>
-             <td>${isAdmin() ? fmtDate(c.supportDate) : `<input type="date" value="${c.supportDate || ''}" onchange="updateCoordSupportDate('${c.id}', this.value)" style="padding:4px;font-size:11px;border:1px solid var(--border-strong);border-radius:3px;">`}</td>
+             <td><input type="date" value="${c.supportDate || ''}" onchange="updateCoordSupportDate('${c.id}', this.value)" style="padding:4px;font-size:11px;border:1px solid var(--border-strong);border-radius:3px;"></td>
              <td>${supportType}</td>
            </tr>`;
         }).join('')}
@@ -3038,7 +3059,6 @@
       else el.value = '';
     }
     async function updateCoordSupportDate(id, val) {
-      if (isAdmin()) return;
       const c = state.coordination.find(x => x.id === id);
       if (c) {
         c.supportDate = val;
@@ -3047,7 +3067,6 @@
       }
     }
     async function addCoordination() {
-      if (isAdmin()) return;
       const orderId = grab('c-orderId');
       const order = state.orders.find(o => o.id === orderId);
       if (!order) { alert('Invalid Deal ID.'); return; }
@@ -3063,7 +3082,7 @@
     async function downloadCoordinationLog(filterData) {
       if (typeof XLSX === 'undefined') { alert('Excel export library did not load — check your internet connection and try again.'); return; }
       const u = state.currentUser;
-      const isCeo = currentRole() === 'admin';
+      const isCeo = u.role === 'admin';
       const orders = myOrders();
       const orderIds = new Set(orders.map(o => o.id));
       let logs = state.coordination.filter(c => isCeo || orderIds.has(c.orderId));
@@ -3089,7 +3108,7 @@
       return order ? totalCycleDays(order) : '';
     }
     function renderLost() {
-      const isCeo = currentRole() === 'admin';
+      const isCeo = state.currentUser.role === 'admin';
       const myClientNames = myOrders().map(o => o.clientName);
       const list = state.lostOrders.filter(l => isCeo || myClientNames.includes(l.clientName));
       const sorted = list.slice().sort((a, b) => (b.dateAnalysed || '').localeCompare(a.dateAnalysed || ''));
@@ -3154,13 +3173,13 @@
           <td><b>${esc(l.clientName)}</b></td>
           <td>${esc(l.competitorWhoWon || '—')}</td>
           <td style="max-width:220px;">${esc(l.rootCause || '—')}</td>
-          <td>${isAdmin() ? esc(l.status || '—') : `
+          <td>
              <select onchange="event.stopPropagation(); updateLostActuals('${l.id}', 'status', this.value)">
                ${['Not started', 'In progress', 'Completed'].map(s => `<option ${s === l.status ? 'selected' : ''}>${s}</option>`).join('')}
              </select>
-          `}</td>
+          </td>
           <td>${fmtDate(l.targetEnd)}</td>
-          <td>${isAdmin() ? fmtDate(l.actualEndDate) : `<input type="date" value="${l.actualEndDate || ''}" onchange="event.stopPropagation(); updateLostActuals('${l.id}', 'actualEndDate', this.value)" style="padding:4px;font-size:11px;border:1px solid var(--border-strong);border-radius:3px;">`}</td>
+          <td><input type="date" value="${l.actualEndDate || ''}" onchange="event.stopPropagation(); updateLostActuals('${l.id}', 'actualEndDate', this.value)" style="padding:4px;font-size:11px;border:1px solid var(--border-strong);border-radius:3px;"></td>
           <td>${att}</td>
           <td>${delayStatus}</td>
           <td>${delayedDays}</td>
@@ -3201,7 +3220,6 @@
       }
     }
     async function updateLostActuals(id, field, val) {
-      if (isAdmin()) return;
       const l = state.lostOrders.find(x => x.id === id);
       if (l) {
         l[field] = val;
@@ -3210,7 +3228,6 @@
       }
     }
     async function addLostOrderEntry() {
-      if (isAdmin()) return;
       const id = grab('l-new-orderId');
       const order = state.orders.find(o => o.id === id);
       if (!order) { alert('Invalid Deal ID.'); return; }
@@ -3233,7 +3250,7 @@
     }
     async function downloadLostOrders(filterData) {
       if (typeof XLSX === 'undefined') { alert('Excel export library did not load — check your internet connection and try again.'); return; }
-      const isCeo = currentRole() === 'admin';
+      const isCeo = state.currentUser.role === 'admin';
       const myClientNames = myOrders().map(o => o.clientName);
       let list = state.lostOrders.filter(l => isCeo || myClientNames.includes(l.clientName));
       if (filterData) list = list.filter(l => filterByDateRange(l.dateAnalysed, filterData));
@@ -3281,7 +3298,6 @@
   </div>`;
     }
     async function updateLost(id, field, value) {
-      if (isAdmin()) return;
       const l = state.lostOrders.find(x => x.id === id);
       if (!l) return;
       l[field] = value;
@@ -3291,7 +3307,6 @@
       render();
     }
     async function addLostNote(id) {
-      if (isAdmin()) return;
       const input = document.getElementById('l-note-' + id);
       const text = input.value.trim();
       if (!text) return;
@@ -3304,7 +3319,7 @@
 
     /* ================= STATS ================= */
     function renderStats() {
-      const isCeo = currentRole() === 'admin';
+      const isCeo = state.currentUser.role === 'admin';
       const ranges = [['day', 'Today'], ['week', 'This week'], ['month', 'This month'], ['custom', 'Custom range'], ['all', 'All time']];
 
       return `
@@ -3488,7 +3503,7 @@
 
     let charts = {};
     function drawCharts() {
-      const isCeo = currentRole() === 'admin';
+      const isCeo = state.currentUser.role === 'admin';
       let s;
 
       const ordersToChart = isCeo ? reps().flatMap(r => filteredOrdersFor(r.username)) : filteredOrdersFor(state.currentUser.username);
@@ -3576,6 +3591,12 @@
 
     /* ================= TEAM (CEO only) ================= */
     function renderTeam() {
+      const dropdownEditors = [
+        { key: 'crm:config:products', label: 'Products', arr: PRODUCTS },
+        { key: 'crm:config:project_types', label: 'Project Types', arr: PROJECT_TYPES },
+        { key: 'crm:config:lead_source', label: 'Lead Sources', arr: LEAD_SOURCE },
+        { key: 'crm:config:priorities', label: 'Priorities', arr: PRIORITIES },
+      ];
       return `
   <div class="card" style="margin-bottom:20px;">
     <div class="section-title"><div><h2>Add sales user</h2><p>Add a teammate manually, or let them sign in with Google and appear here automatically</p></div></div>
@@ -3592,6 +3613,80 @@
       ${state.users.map(u => `<tr><td>${esc(u.name)}</td><td>${esc(u.email || u.username)}</td><td>${u.role === 'admin' ? 'Admin' : 'User'}</td>
         <td>${u.role === 'user' ? `<button class="link-btn btn-danger" onclick="removeRep('${u.username}')">Remove</button>` : ''}</td></tr>`).join('')}
     </table></div>
+  </div>
+
+  <!-- ======== DROPDOWN EDITORS ======== -->
+  <div class="card" style="margin-bottom:20px;">
+    <div class="section-title"><div><h2>Edit dropdown options</h2><p>Add or remove options from the standard fields in the lead entry form</p></div></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-top:4px;">
+      ${dropdownEditors.map(d => `
+        <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:14px;">
+          <div style="font-weight:600;font-size:13px;margin-bottom:8px;">${d.label}</div>
+          <div style="margin-bottom:8px;">
+            ${d.arr.map((opt, i) => `
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+                <span style="font-size:12px;flex:1;padding:3px 6px;background:var(--surface);border-radius:4px;">${esc(opt)}</span>
+                <button class="link-btn btn-danger" style="font-size:11px;" onclick="removeDropdownOption('${d.key}',${i})">✕</button>
+              </div>`).join('')}
+          </div>
+          <div style="display:flex;gap:6px;">
+            <input id="dd-new-${d.key.replace(/:/g,'-')}" placeholder="New option…" style="flex:1;font-size:12px;padding:5px 8px;border:1px solid var(--border-strong);border-radius:6px;">
+            <button class="btn btn-primary" style="padding:5px 10px;font-size:12px;" onclick="addDropdownOption('${d.key}','dd-new-${d.key.replace(/:/g,'-')}')">Add</button>
+          </div>
+        </div>`).join('')}
+    </div>
+  </div>
+
+  <!-- ======== CUSTOM FIELDS & BUTTONS ======== -->
+  <div class="card" style="margin-bottom:20px;">
+    <div class="section-title"><div><h2>Custom fields &amp; buttons</h2><p>Add extra inputs or action buttons to the lead entry form</p></div></div>
+
+    <!-- Existing custom fields -->
+    ${state.customFieldsConfig.length ? `
+    <div style="margin-bottom:16px;">
+      <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px;">Current custom fields / buttons</div>
+      <div class="table-wrap"><table>
+        <tr><th>Label</th><th>Type</th><th>Options / Action</th><th>Full width</th><th></th></tr>
+        ${state.customFieldsConfig.map((f,i) => `
+          <tr>
+            <td>${esc(f.label)}</td>
+            <td><span style="font-size:11px;background:var(--surface);padding:2px 7px;border-radius:10px;">${esc(f.type)}</span></td>
+            <td style="font-size:11.5px;color:var(--muted);">${f.type==='dropdown' ? (f.options||[]).join(', ') : (f.action||'—')}</td>
+            <td>${f.fullWidth ? '✓' : ''}</td>
+            <td><button class="link-btn btn-danger" onclick="removeCustomField(${i})">Remove</button></td>
+          </tr>`).join('')}
+      </table></div>
+    </div>` : ''}
+
+    <!-- Add new custom field -->
+    <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:16px;">
+      <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:10px;">Add a new field or button</div>
+      <div class="grid2">
+        <div class="field"><label>Label / button text</label><input id="cf-new-label" placeholder="e.g. Sub-contractor"></div>
+        <div class="field"><label>Type</label>
+          <select id="cf-new-type" onchange="renderCustomFieldTypeUI()">
+            <option value="text">Text input</option>
+            <option value="dropdown">Dropdown</option>
+            <option value="button">Button</option>
+          </select>
+        </div>
+        <div class="field" id="cf-new-options-wrap" style="grid-column:1/-1;display:none;">
+          <label>Dropdown options (comma-separated)</label>
+          <input id="cf-new-options" placeholder="e.g. Option A, Option B, Option C">
+        </div>
+        <div class="field" id="cf-new-action-wrap" style="grid-column:1/-1;display:none;">
+          <label>Button onclick action (JS expression)</label>
+          <input id="cf-new-action" placeholder="e.g. window.open('https://...')">
+        </div>
+        <div class="field" style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" id="cf-new-fullwidth" style="width:auto;margin:0;">
+          <label for="cf-new-fullwidth" style="margin:0;cursor:pointer;">Full-width field</label>
+        </div>
+      </div>
+      <div style="margin-top:10px;">
+        <button class="btn btn-primary" onclick="addCustomField()">Add to form</button>
+      </div>
+    </div>
   </div>`;
     }
     async function addRep() {
@@ -3608,6 +3703,70 @@
       state.users = state.users.filter(u => u.username !== username);
       await storageSet(K_USERS, state.users);
       render();
+    }
+
+    /* ================= FORM CUSTOMIZATION ================= */
+    const CONFIG_KEY_MAP = {
+      'crm:config:products': { get: () => PRODUCTS, set: v => { PRODUCTS = v; } },
+      'crm:config:project_types': { get: () => PROJECT_TYPES, set: v => { PROJECT_TYPES = v; } },
+      'crm:config:lead_source': { get: () => LEAD_SOURCE, set: v => { LEAD_SOURCE = v; } },
+      'crm:config:priorities': { get: () => PRIORITIES, set: v => { PRIORITIES = v; } },
+    };
+    async function addDropdownOption(key, inputId) {
+      const input = document.getElementById(inputId);
+      const val = (input ? input.value : '').trim();
+      if (!val) { alert('Enter a value first.'); return; }
+      const cfg = CONFIG_KEY_MAP[key];
+      if (!cfg) return;
+      const arr = cfg.get();
+      if (arr.includes(val)) { alert('That option already exists.'); return; }
+      arr.push(val);
+      cfg.set(arr);
+      await storageSet(key, arr);
+      render();
+    }
+    async function removeDropdownOption(key, idx) {
+      const cfg = CONFIG_KEY_MAP[key];
+      if (!cfg) return;
+      const arr = cfg.get();
+      if (arr.length <= 1) { alert('You must keep at least one option.'); return; }
+      arr.splice(idx, 1);
+      cfg.set(arr);
+      await storageSet(key, arr);
+      render();
+    }
+    async function addCustomField() {
+      const label = (document.getElementById('cf-new-label') ? document.getElementById('cf-new-label').value : '').trim();
+      const type = document.getElementById('cf-new-type') ? document.getElementById('cf-new-type').value : 'text';
+      const fullWidth = document.getElementById('cf-new-fullwidth') ? document.getElementById('cf-new-fullwidth').checked : false;
+      if (!label) { alert('Please enter a label.'); return; }
+      const newField = { id: uid(), label, type, fullWidth };
+      if (type === 'dropdown') {
+        const optRaw = document.getElementById('cf-new-options') ? document.getElementById('cf-new-options').value : '';
+        newField.options = optRaw.split(',').map(s => s.trim()).filter(Boolean);
+        if (!newField.options.length) { alert('Please enter at least one dropdown option.'); return; }
+      }
+      if (type === 'button') {
+        const action = document.getElementById('cf-new-action') ? document.getElementById('cf-new-action').value.trim() : '';
+        if (!action) { alert('Please enter a button action (e.g. window.open(...)).'); return; }
+        newField.action = action;
+      }
+      state.customFieldsConfig.push(newField);
+      await storageSet('crm:config:custom_fields', state.customFieldsConfig);
+      render();
+    }
+    async function removeCustomField(idx) {
+      if (!confirm('Remove this custom field from the form?')) return;
+      state.customFieldsConfig.splice(idx, 1);
+      await storageSet('crm:config:custom_fields', state.customFieldsConfig);
+      render();
+    }
+    function renderCustomFieldTypeUI() {
+      const type = document.getElementById('cf-new-type') ? document.getElementById('cf-new-type').value : '';
+      const optsWrap = document.getElementById('cf-new-options-wrap');
+      const actWrap = document.getElementById('cf-new-action-wrap');
+      if (optsWrap) optsWrap.style.display = type === 'dropdown' ? 'block' : 'none';
+      if (actWrap) actWrap.style.display = type === 'button' ? 'block' : 'none';
     }
 
     /* Migrates user and ownership records left over from older local versions. */
@@ -3650,6 +3809,19 @@
       if (migrated) {
         await storageSet(K_USERS, state.users);
       }
+      
+      const customStages = await storageGet('crm:config:stages');
+      if (customStages) { STAGES = customStages; OPEN_STAGES = STAGES.filter(s => !s.startsWith('6.') && !s.startsWith('7.')); }
+      const customProjectTypes = await storageGet('crm:config:project_types');
+      if (customProjectTypes) PROJECT_TYPES = customProjectTypes;
+      const customLeadSource = await storageGet('crm:config:lead_source');
+      if (customLeadSource) LEAD_SOURCE = customLeadSource;
+      const customPriorities = await storageGet('crm:config:priorities');
+      if (customPriorities) PRIORITIES = customPriorities;
+      const customProducts = await storageGet('crm:config:products');
+      if (customProducts) PRODUCTS = customProducts;
+      state.customFieldsConfig = await storageGet('crm:config:custom_fields') || [];
+
       state.loaded = true;
       render();
     }
