@@ -2209,7 +2209,7 @@
           'Worst Delayed Follow-up': df ? df.label : '',
           'Worst Delayed Follow-up Time (days)': df ? df.days : '',
           'Reason for Worst Follow-up Delay': df ? df.delayReason : '',
-          'Reason for Win/Loss': o.reasonLostWon || ''
+          'Reason for Win/Loss': o.reasonLostWon || '',
           ...(state.customFieldsConfig
             .filter(f => f.type !== 'button')
             .reduce((acc, f) => { acc[f.label] = (o.customFields && o.customFields[f.id]) || ''; return acc; }, {}))
