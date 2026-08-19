@@ -1976,8 +1976,23 @@
       const viewAsUsername = isCeo ? state.viewingAsRep : null;
       const viewAsRepMode = !!viewAsUsername;
       const orders = viewAsRepMode ? state.orders.filter(o => o.salesPerson === viewAsUsername) : myOrders();
-      let attention = needsAttention(orders);
-      attention = applyDashFilters(attention);
+      let overdueLeads = orders.filter(o => !o.dealStage.startsWith('6.') && !o.dealStage.startsWith('7.') && isOverdue(o.followUpDate));
+      overdueLeads.sort((a,b) => {
+          const ad = a.followUpDate || '9999', bd = b.followUpDate || '9999';
+          if (ad !== bd) return ad < bd ? -1 : 1;
+          const pr = { Hot: 0, Warm: 1, Cold: 2 };
+          return (pr[a.priority] ?? 3) - (pr[b.priority] ?? 3);
+      });
+      overdueLeads = applyDashFilters(overdueLeads);
+      
+      let upcomingLeads = orders.filter(o => !o.dealStage.startsWith('6.') && !o.dealStage.startsWith('7.') && o.followUpDate && !isOverdue(o.followUpDate));
+      upcomingLeads.sort((a,b) => {
+          const ad = a.followUpDate || '9999', bd = b.followUpDate || '9999';
+          if (ad !== bd) return ad < bd ? -1 : 1;
+          const pr = { Hot: 0, Warm: 1, Cold: 2 };
+          return (pr[a.priority] ?? 3) - (pr[b.priority] ?? 3);
+      });
+      upcomingLeads = applyDashFilters(upcomingLeads);
       const showCeoColumns = isCeo && !viewAsRepMode;
 
       const won = orders.filter(o => o.dealStage.startsWith('6.'));
@@ -2015,13 +2030,14 @@
       }
 
       html += `<div class="filter-bar" style="margin-top:4px;">
-    <button class="pill-btn ${state.dashboardSubTab === 'attention' ? 'active' : ''}" onclick="setDashboardSubTab('attention')">Needs attention</button>
-    <button class="pill-btn ${state.dashboardSubTab !== 'attention' ? 'active' : ''}" onclick="setDashboardSubTab('leads')">${showCeoColumns ? 'All Leads' : (viewAsRepMode ? esc(repName(viewAsUsername)) + "'s Leads" : 'Your Leads')}</button>
+    <button class="pill-btn ${state.dashboardSubTab === 'overdue' ? 'active' : ''}" onclick="setDashboardSubTab('overdue')">Overdue tab</button>
+    <button class="pill-btn ${state.dashboardSubTab === 'upcoming' ? 'active' : ''}" onclick="setDashboardSubTab('upcoming')">Approaching Due</button>
+    <button class="pill-btn ${state.dashboardSubTab === 'leads' || (!state.dashboardSubTab) ? 'active' : ''}" onclick="setDashboardSubTab('leads')">${showCeoColumns ? 'All Leads' : (viewAsRepMode ? esc(repName(viewAsUsername)) + "'s Leads" : 'Your Leads')}</button>
   </div>`;
 
-      if (state.dashboardSubTab === 'attention') {
+      if (state.dashboardSubTab === 'overdue') {
         html += `<div class="card" style="margin-bottom:20px;">
-      <div class="section-title"><div><h2>Needs attention</h2><p>Overdue or upcoming follow-ups, prioritized by urgency and heat</p></div>
+      <div class="section-title"><div><h2>Overdue tab</h2><p>Leads with passed follow-up dates, prioritized by urgency and heat</p></div>
         <div class="filter-bar">
           <select id="dash-priority-filter-attn" onchange="state.dashPriorityFilter=this.value; render()">
             <option value="">All Priorities</option>
@@ -2036,19 +2052,50 @@
           </select>
         </div>
       </div>
-      ${attention.length ? `<div class="table-wrap" data-rkey="dashboard-attention"><table>
+      ${overdueLeads.length ? `<div class="table-wrap" data-rkey="dashboard-attention"><table>
         <tr><th>Client</th>${showCeoColumns ? '<th>Sales rep</th>' : ''}<th>Stage</th><th>Priority</th><th>Next Follow-up date</th><th>Next Follow up Action</th><th></th></tr>
-        ${attention.map(o => `
+        ${overdueLeads.map(o => `
           <tr class="clickable" onclick="openUpdateModal('${o.id}')">
             <td><b>${esc(o.clientName)}</b><br><span style="color:var(--muted);font-size:11.5px;">${esc(o.projectName || '')}</span></td>
             ${showCeoColumns ? `<td>${esc(repName(o.salesPerson))}</td>` : ''}
             <td>${badgeForStage(o.dealStage)}</td>
             <td>${badgeForPriority(o.priority)}</td>
-            <td>${isOverdue(o.followUpDate) ? '<span class="badge badge-overdue">Overdue ' + fmtDate(o.followUpDate) + '</span>' : fmtDate(o.followUpDate)}</td>
+            <td><span class="badge badge-overdue">Overdue ${fmtDate(o.followUpDate)}</span></td>
             <td style="max-width:200px;">${esc(o.nextAction || '—')}</td>
             <td style="white-space:nowrap;"><button class="link-btn" onclick="event.stopPropagation();openUpdateModal('${o.id}')">Update</button><button class="link-btn" style="color:var(--red);margin-left:6px;" onclick="event.stopPropagation();deleteOrderDirect('${o.id}')">Delete</button></td>
           </tr>`).join('')}
-      </table></div>` : `<div class="empty">Nothing urgent right now — all caught up.</div>`}
+      </table></div>` : `<div class="empty">No overdue leads right now — great job!</div>`}
+    </div>`;
+      } else if (state.dashboardSubTab === 'upcoming') {
+        html += `<div class="card" style="margin-bottom:20px;">
+      <div class="section-title"><div><h2>Approaching Due</h2><p>Upcoming follow-ups, prioritized by date</p></div>
+        <div class="filter-bar">
+          <select id="dash-priority-filter-attn" onchange="state.dashPriorityFilter=this.value; render()">
+            <option value="">All Priorities</option>
+            <option value="Hot" ${state.dashPriorityFilter === 'Hot' ? 'selected' : ''}>Hot</option>
+            <option value="Warm" ${state.dashPriorityFilter === 'Warm' ? 'selected' : ''}>Warm</option>
+            <option value="Cold" ${state.dashPriorityFilter === 'Cold' ? 'selected' : ''}>Cold</option>
+          </select>
+          <select id="dash-sort-value-attn" onchange="state.dashSortValue=this.value; render()">
+            <option value="">Sort by Value</option>
+            <option value="DESC" ${state.dashSortValue === 'DESC' ? 'selected' : ''}>Value (High to Low)</option>
+            <option value="ASC" ${state.dashSortValue === 'ASC' ? 'selected' : ''}>Value (Low to High)</option>
+          </select>
+        </div>
+      </div>
+      ${upcomingLeads.length ? `<div class="table-wrap" data-rkey="dashboard-attention"><table>
+        <tr><th>Client</th>${showCeoColumns ? '<th>Sales rep</th>' : ''}<th>Stage</th><th>Priority</th><th>Next Follow-up date</th><th>Next Follow up Action</th><th></th></tr>
+        ${upcomingLeads.map(o => `
+          <tr class="clickable" onclick="openUpdateModal('${o.id}')">
+            <td><b>${esc(o.clientName)}</b><br><span style="color:var(--muted);font-size:11.5px;">${esc(o.projectName || '')}</span></td>
+            ${showCeoColumns ? `<td>${esc(repName(o.salesPerson))}</td>` : ''}
+            <td>${badgeForStage(o.dealStage)}</td>
+            <td>${badgeForPriority(o.priority)}</td>
+            <td>${fmtDate(o.followUpDate)}</td>
+            <td style="max-width:200px;">${esc(o.nextAction || '—')}</td>
+            <td style="white-space:nowrap;"><button class="link-btn" onclick="event.stopPropagation();openUpdateModal('${o.id}')">Update</button><button class="link-btn" style="color:var(--red);margin-left:6px;" onclick="event.stopPropagation();deleteOrderDirect('${o.id}')">Delete</button></td>
+          </tr>`).join('')}
+      </table></div>` : `<div class="empty">No upcoming leads found.</div>`}
     </div>`;
       } else {
         html += `<div class="card">
