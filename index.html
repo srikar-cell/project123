@@ -2764,7 +2764,24 @@
           : `<input value="${esc(repName(d.salesPerson))}" disabled>`}
         </div>
         <div class="field"><label>Lead source type *</label><select id="f-leadSourceType">${LEAD_SOURCE.map(s => `<option ${s === d.leadSourceType ? 'selected' : ''}>${s}</option>`).join('')}</select></div>
-        <div class="field"><label>Lead source name</label><input id="f-leadSourceName" value="${esc(d.leadSourceName)}" placeholder="e.g. referral, website"></div>
+        <div class="field">
+          <label>Lead source name</label>
+          <select id="f-leadSourceName">
+            <option value="" ${!d.leadSourceName ? 'selected' : ''}>Select Source</option>
+            <optgroup label="EPC Visit">
+              <option value="Data Centre" ${d.leadSourceName === 'Data Centre' ? 'selected' : ''}>Data Centre</option>
+              <option value="Metro" ${d.leadSourceName === 'Metro' ? 'selected' : ''}>Metro</option>
+              <option value="Highways" ${d.leadSourceName === 'Highways' ? 'selected' : ''}>Highways</option>
+              <option value="Real State" ${d.leadSourceName === 'Real State' ? 'selected' : ''}>Real State</option>
+            </optgroup>
+            <option value="Tender Details" ${d.leadSourceName === 'Tender Details' ? 'selected' : ''}>Tender Details</option>
+            <option value="Events" ${d.leadSourceName === 'Events' ? 'selected' : ''}>Events</option>
+            <optgroup label="Website">
+              <option value="Biltrax" ${d.leadSourceName === 'Biltrax' ? 'selected' : ''}>Biltrax</option>
+              <option value="Others" ${d.leadSourceName === 'Others' ? 'selected' : ''}>Others</option>
+            </optgroup>
+          </select>
+        </div>
         <div class="field"><label>Client name / company *</label><input id="f-clientName" value="${esc(d.clientName)}" placeholder="Company Pvt Ltd"></div>
         <div class="field"><label>Client POC *</label><input id="f-clientPOC" value="${esc(d.clientPOC)}"></div>
         <div class="field"><label>POC designation *</label><input id="f-clientPOCDesignation" value="${esc(d.clientPOCDesignation)}"></div>
