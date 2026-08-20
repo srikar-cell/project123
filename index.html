@@ -2815,18 +2815,14 @@
           <label>Lead source name</label>
           <select id="f-leadSourceName">
             <option value="" ${!d.leadSourceName ? 'selected' : ''}>Select Source</option>
-            <optgroup label="EPC Visit">
-              <option value="EPC Visit - Data Centre" ${d.leadSourceName === 'EPC Visit - Data Centre' ? 'selected' : ''}>Data Centre</option>
-              <option value="EPC Visit - Metro" ${d.leadSourceName === 'EPC Visit - Metro' ? 'selected' : ''}>Metro</option>
-              <option value="EPC Visit - Highways" ${d.leadSourceName === 'EPC Visit - Highways' ? 'selected' : ''}>Highways</option>
-              <option value="EPC Visit - Real State" ${d.leadSourceName === 'EPC Visit - Real State' ? 'selected' : ''}>Real State</option>
-            </optgroup>
+            <option value="EPC Visit - Data Centre" ${d.leadSourceName === 'EPC Visit - Data Centre' ? 'selected' : ''}>EPC Visit - Data Centre</option>
+            <option value="EPC Visit - Metro" ${d.leadSourceName === 'EPC Visit - Metro' ? 'selected' : ''}>EPC Visit - Metro</option>
+            <option value="EPC Visit - Highways" ${d.leadSourceName === 'EPC Visit - Highways' ? 'selected' : ''}>EPC Visit - Highways</option>
+            <option value="EPC Visit - Real State" ${d.leadSourceName === 'EPC Visit - Real State' ? 'selected' : ''}>EPC Visit - Real State</option>
             <option value="Tender Details" ${d.leadSourceName === 'Tender Details' ? 'selected' : ''}>Tender Details</option>
             <option value="Events" ${d.leadSourceName === 'Events' ? 'selected' : ''}>Events</option>
-            <optgroup label="Website">
-              <option value="Website - Biltrax" ${d.leadSourceName === 'Website - Biltrax' ? 'selected' : ''}>Biltrax</option>
-              <option value="Website - Others" ${d.leadSourceName === 'Website - Others' ? 'selected' : ''}>Others</option>
-            </optgroup>
+            <option value="Website - Biltrax" ${d.leadSourceName === 'Website - Biltrax' ? 'selected' : ''}>Website - Biltrax</option>
+            <option value="Website - Others" ${d.leadSourceName === 'Website - Others' ? 'selected' : ''}>Website - Others</option>
           </select>
         </div>
         <div class="field"><label>Client name / company *</label><input id="f-clientName" value="${esc(d.clientName)}" placeholder="Company Pvt Ltd"></div>
