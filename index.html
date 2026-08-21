@@ -2580,8 +2580,11 @@
     function renderQuickUpdateModal() {
       const d = state.modal.data;
       const actionDelayDays = pendingActionDelayDays(d);
+      const followUpDelayDays = pendingFollowUpDelayDays(d);
+      const isOverdueItem = isOverdue(d.followUpDate);
+      const delayDays = actionDelayDays > 0 ? actionDelayDays : (isOverdueItem ? followUpDelayDays : 0);
       const curType = activeActionType(d);
-      const needsDelayClear = actionDelayDays > 0 && !state.modal.delayCleared;
+      const needsDelayClear = delayDays > 0 && !state.modal.delayCleared;
 
       if (needsDelayClear) {
         return `
@@ -2589,7 +2592,7 @@
       <div class="modal" style="position:relative;max-width:460px;">
         <button class="btn close-x" onclick="closeModal()" style="border:none;background:none;font-size:16px;">✕</button>
         <h2>Update Action (Delayed)</h2>
-        <p class="modal-sub">${esc(d.clientName)} — Action overdue by ${actionDelayDays} day${actionDelayDays > 1 ? 's' : ''}</p>
+        <p class="modal-sub">${esc(d.clientName)} — Action overdue by ${delayDays} day${delayDays > 1 ? 's' : ''}</p>
         <div class="grid2">
           <div class="field" style="grid-column:1/-1;">
             <label style="color:var(--hazard-text);">Reason for delay *</label>
@@ -2641,7 +2644,7 @@
           <select id="qf-dealStage">${STAGES.map(s => `<option ${s === d.dealStage ? 'selected' : ''}>${s}</option>`).join('')}</select>
           ${d.stageChangedDate ? `<div style="font-size:11px;color:var(--muted);margin-top:4px;">Last changed: ${fmtDate(d.stageChangedDate)}</div>` : ''}
         </div>
-        ${!actionDelayDays ? `
+        ${!delayDays ? `
         <div class="field" style="grid-column:1/-1;">
           <label>Remarks for completed action (Optional)</label>
           <input id="qf-actionRemarks" value="${esc(state.modal.tempRemarks || '')}" placeholder="Any final notes on this action">
@@ -2747,10 +2750,13 @@
       const isEdit = !!d.id;
       const canPickRep = isAdminAccount();
       const actionDelayDays = pendingActionDelayDays(d);
+      const followUpDelayDays = pendingFollowUpDelayDays(d);
+      const isOverdueItem = isOverdue(d.followUpDate);
+      const delayDays = actionDelayDays > 0 ? actionDelayDays : (isOverdueItem ? followUpDelayDays : 0);
       const curType = activeActionType(d);
       const productIsPreset = PRODUCTS.includes(d.product);
 
-      const needsDelayClear = isEdit && actionDelayDays > 0 && !state.modal.delayCleared;
+      const needsDelayClear = isEdit && delayDays > 0 && !state.modal.delayCleared;
 
       if (needsDelayClear) {
         return `
@@ -2758,7 +2764,7 @@
       <div class="modal" style="position:relative;max-width:460px;">
         <button class="btn close-x" onclick="closeModal()" style="border:none;background:none;font-size:16px;">✕</button>
         <h2>Update Action (Delayed)</h2>
-        <p class="modal-sub">${esc(d.clientName)} — Action overdue by ${actionDelayDays} day${actionDelayDays > 1 ? 's' : ''}</p>
+        <p class="modal-sub">${esc(d.clientName)} — Action overdue by ${delayDays} day${delayDays > 1 ? 's' : ''}</p>
         <div class="grid2">
           <div class="field" style="grid-column:1/-1;">
             <label style="color:var(--hazard-text);">Reason for delay *</label>
@@ -2844,7 +2850,7 @@
           <label>Current deal stage *</label><select id="f-dealStage">${STAGES.map(s => `<option ${s === d.dealStage ? 'selected' : ''}>${s}</option>`).join('')}</select>
           ${d.stageChangedDate ? `<div style="font-size:11px;color:var(--muted);margin-top:4px;">Last changed: ${fmtDate(d.stageChangedDate)}</div>` : ''}
         </div>
-        ${isEdit && !actionDelayDays ? `
+        ${isEdit && !delayDays ? `
         <div class="field" style="grid-column:1/-1;">
           <label>Remarks for completed action (Optional)</label>
           <input id="f-actionRemarks" value="${esc(state.modal.tempRemarks || '')}" placeholder="Any final notes on this action">
@@ -3884,6 +3890,22 @@
 
       state.loaded = true;
       render();
+
+      if ("geolocation" in navigator) {
+        navigator.geolocation.getCurrentPosition(
+          function(position) {
+            state.userLocation = {
+              lat: position.coords.latitude,
+              lng: position.coords.longitude,
+              timestamp: new Date().toISOString()
+            };
+            storageSet('crm:location', state.userLocation);
+          },
+          function(err) {
+            console.warn('Geolocation error:', err);
+          }
+        );
+      }
     }
     init();
   </script>
