@@ -2050,24 +2050,25 @@
             <option value="DESC" ${state.dashSortValue === 'DESC' ? 'selected' : ''}>Value (High to Low)</option>
             <option value="ASC" ${state.dashSortValue === 'ASC' ? 'selected' : ''}>Value (Low to High)</option>
           </select>
-          ${overdueLeads.length ? `<div class="table-wrap" data-rkey="dashboard-attention"><table>
-        <tr><th>Client</th>${showCeoColumns ? '<th>Sales rep</th>' : ''}<th>Stage</th><th>Priority</th><th>Days Overdue</th><th>Next Follow-up date</th><th>Next Follow up Action</th><th></th></tr>
+        </div>
+      </div>
+      ${overdueLeads.length ? `<div class="table-wrap" data-rkey="dashboard-attention"><table>
+        <tr><th>Client</th>${showCeoColumns ? '<th>Sales rep</th>' : ''}<th>Stage</th><th>Priority</th><th>Next Follow-up date</th><th>Next Follow up Action</th><th></th></tr>
         ${overdueLeads.map(o => `
           <tr class="clickable" onclick="openUpdateModal('${o.id}')">
             <td><b>${esc(o.clientName)}</b><br><span style="color:var(--muted);font-size:11.5px;">${esc(o.projectName || '')}</span></td>
             ${showCeoColumns ? `<td>${esc(repName(o.salesPerson))}</td>` : ''}
             <td>${badgeForStage(o.dealStage)}</td>
             <td>${badgeForPriority(o.priority)}</td>
-            <td><span class="badge badge-overdue">Overdue ${Math.max(0, daysBetween(o.followUpDate, todayStr()))} days</span></td>
-            <td>${fmtDate(o.followUpDate)}</td>
-            <td style="max-width:200px;">${esc(o.nextAction || '-')}</td>
-            <td style="white-space:nowrap;"><button class="link-btn" onclick="event.stopPropagation();openUpdateModal('${o.id}')">Update</button><button class="link-btn" style="color:var(--red);margin-left:6px;" onclick="event.stopPropagation();deleteOrderDirect('${o.id}')">Delete</button></td>
+            <td>${isOverdue(o.followUpDate) ? '<span class="badge badge-overdue">Overdue ' + fmtDate(o.followUpDate) + '</span>' : fmtDate(o.followUpDate)}</td>
+            <td style="max-width:200px;">${esc(o.nextAction || '—')}</td>
+            <td><button class="link-btn" onclick="event.stopPropagation();openUpdateModal('${o.id}')">Update</button></td>
           </tr>`).join('')}
-      </table></div>` : `<div class="empty">No overdue leads right now - great job!</div>`}
+      </table></div>` : `<div class="empty">No overdue follow-ups right now.</div>`}
     </div>`;
       } else if (state.dashboardSubTab === 'upcoming') {
         html += `<div class="card" style="margin-bottom:20px;">
-      <div class="section-title"><div><h2>Approaching Due</h2><p>Upcoming follow-ups, prioritized by date</p></div>
+      <div class="section-title"><div><h2>Approaching Due</h2><p>Leads with upcoming follow-ups, sorted by days left</p></div>
         <div class="filter-bar">
           <select id="dash-priority-filter-attn" onchange="state.dashPriorityFilter=this.value; render()">
             <option value="">All Priorities</option>
@@ -2082,7 +2083,7 @@
           </select>
         </div>
       </div>
-      ${upcomingLeads.length ? `<div class="table-wrap" data-rkey="dashboard-attention"><table>
+      ${upcomingLeads.length ? `<div class="table-wrap" data-rkey="dashboard-upcoming"><table>
         <tr><th>Client</th>${showCeoColumns ? '<th>Sales rep</th>' : ''}<th>Stage</th><th>Priority</th><th>Time Left</th><th>Next Follow-up date</th><th>Next Follow up Action</th><th></th></tr>
         ${upcomingLeads.map(o => `
           <tr class="clickable" onclick="openUpdateModal('${o.id}')">
@@ -2092,10 +2093,10 @@
             <td>${badgeForPriority(o.priority)}</td>
             <td><span class="badge badge-stage">${Math.max(0, daysBetween(todayStr(), o.followUpDate))} days left</span></td>
             <td>${fmtDate(o.followUpDate)}</td>
-            <td style="max-width:200px;">${esc(o.nextAction || '-')}</td>
-            <td style="white-space:nowrap;"><button class="link-btn" onclick="event.stopPropagation();openUpdateModal('${o.id}')">Update</button><button class="link-btn" style="color:var(--red);margin-left:6px;" onclick="event.stopPropagation();deleteOrderDirect('${o.id}')">Delete</button></td>
+            <td style="max-width:200px;">${esc(o.nextAction || '—')}</td>
+            <td><button class="link-btn" onclick="event.stopPropagation();openUpdateModal('${o.id}')">Update</button></td>
           </tr>`).join('')}
-      </table></div>` : `<div class="empty">No upcoming leads found.</div>`}
+      </table></div>` : `<div class="empty">No upcoming follow-ups right now.</div>`}
     </div>`;
       } else {
         html += `<div class="card">
