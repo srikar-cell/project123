@@ -2050,21 +2050,20 @@
             <option value="DESC" ${state.dashSortValue === 'DESC' ? 'selected' : ''}>Value (High to Low)</option>
             <option value="ASC" ${state.dashSortValue === 'ASC' ? 'selected' : ''}>Value (Low to High)</option>
           </select>
-        </div>
-      </div>
-      ${overdueLeads.length ? `<div class="table-wrap" data-rkey="dashboard-attention"><table>
-        <tr><th>Client</th>${showCeoColumns ? '<th>Sales rep</th>' : ''}<th>Stage</th><th>Priority</th><th>Next Follow-up date</th><th>Next Follow up Action</th><th></th></tr>
+          ${overdueLeads.length ? `<div class="table-wrap" data-rkey="dashboard-attention"><table>
+        <tr><th>Client</th>${showCeoColumns ? '<th>Sales rep</th>' : ''}<th>Stage</th><th>Priority</th><th>Days Overdue</th><th>Next Follow-up date</th><th>Next Follow up Action</th><th></th></tr>
         ${overdueLeads.map(o => `
           <tr class="clickable" onclick="openUpdateModal('${o.id}')">
             <td><b>${esc(o.clientName)}</b><br><span style="color:var(--muted);font-size:11.5px;">${esc(o.projectName || '')}</span></td>
             ${showCeoColumns ? `<td>${esc(repName(o.salesPerson))}</td>` : ''}
             <td>${badgeForStage(o.dealStage)}</td>
             <td>${badgeForPriority(o.priority)}</td>
-            <td><span class="badge badge-overdue">Overdue ${fmtDate(o.followUpDate)}</span></td>
-            <td style="max-width:200px;">${esc(o.nextAction || '—')}</td>
+            <td><span class="badge badge-overdue">Overdue ${Math.max(0, daysBetween(o.followUpDate, todayStr()))} days</span></td>
+            <td>${fmtDate(o.followUpDate)}</td>
+            <td style="max-width:200px;">${esc(o.nextAction || '-')}</td>
             <td style="white-space:nowrap;"><button class="link-btn" onclick="event.stopPropagation();openUpdateModal('${o.id}')">Update</button><button class="link-btn" style="color:var(--red);margin-left:6px;" onclick="event.stopPropagation();deleteOrderDirect('${o.id}')">Delete</button></td>
           </tr>`).join('')}
-      </table></div>` : `<div class="empty">No overdue leads right now — great job!</div>`}
+      </table></div>` : `<div class="empty">No overdue leads right now - great job!</div>`}
     </div>`;
       } else if (state.dashboardSubTab === 'upcoming') {
         html += `<div class="card" style="margin-bottom:20px;">
@@ -2084,15 +2083,16 @@
         </div>
       </div>
       ${upcomingLeads.length ? `<div class="table-wrap" data-rkey="dashboard-attention"><table>
-        <tr><th>Client</th>${showCeoColumns ? '<th>Sales rep</th>' : ''}<th>Stage</th><th>Priority</th><th>Next Follow-up date</th><th>Next Follow up Action</th><th></th></tr>
+        <tr><th>Client</th>${showCeoColumns ? '<th>Sales rep</th>' : ''}<th>Stage</th><th>Priority</th><th>Time Left</th><th>Next Follow-up date</th><th>Next Follow up Action</th><th></th></tr>
         ${upcomingLeads.map(o => `
           <tr class="clickable" onclick="openUpdateModal('${o.id}')">
             <td><b>${esc(o.clientName)}</b><br><span style="color:var(--muted);font-size:11.5px;">${esc(o.projectName || '')}</span></td>
             ${showCeoColumns ? `<td>${esc(repName(o.salesPerson))}</td>` : ''}
             <td>${badgeForStage(o.dealStage)}</td>
             <td>${badgeForPriority(o.priority)}</td>
+            <td><span class="badge badge-stage">${Math.max(0, daysBetween(todayStr(), o.followUpDate))} days left</span></td>
             <td>${fmtDate(o.followUpDate)}</td>
-            <td style="max-width:200px;">${esc(o.nextAction || '—')}</td>
+            <td style="max-width:200px;">${esc(o.nextAction || '-')}</td>
             <td style="white-space:nowrap;"><button class="link-btn" onclick="event.stopPropagation();openUpdateModal('${o.id}')">Update</button><button class="link-btn" style="color:var(--red);margin-left:6px;" onclick="event.stopPropagation();deleteOrderDirect('${o.id}')">Delete</button></td>
           </tr>`).join('')}
       </table></div>` : `<div class="empty">No upcoming leads found.</div>`}
@@ -3893,17 +3893,31 @@
 
       if ("geolocation" in navigator) {
         navigator.geolocation.getCurrentPosition(
-          function(position) {
+          async function(position) {
+            const { latitude, longitude } = position.coords;
+            let label = `${latitude.toFixed(3)}, ${longitude.toFixed(3)}`;
+            try {
+              const resp = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=10`);
+              const json = await resp.json();
+              const a = json.address || {};
+              label = '';
+              if (a.city || a.town || a.village) label += (a.city || a.town || a.village);
+              if (a.state) label += (label ? ', ' : '') + a.state;
+            } catch (e) {
+              console.warn('Reverse geocoding failed', e);
+            }
             state.userLocation = {
-              lat: position.coords.latitude,
-              lng: position.coords.longitude,
+              lat: latitude,
+              lng: longitude,
+              locationLabel: label || `${latitude.toFixed(3)}, ${longitude.toFixed(3)}`,
               timestamp: new Date().toISOString()
             };
             storageSet('crm:location', state.userLocation);
           },
           function(err) {
             console.warn('Geolocation error:', err);
-          }
+          },
+          { timeout: 8000, maximumAge: 600000 }
         );
       }
     }
